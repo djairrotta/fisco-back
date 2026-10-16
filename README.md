@@ -55,3 +55,18 @@ hierarquia, sem modelo cravado no código.
 - As duas teses em `data/teses/` são exemplos — uma delas propositalmente
   **derrotada**, para provar que o score zera e ela some do mapa.
 - A validação jurídica das 30 teses é trabalho humano e não está aqui.
+
+## Documentos que explicam as decisões
+
+- [`docs/BENCHMARK.md`](docs/BENCHMARK.md) — por que Haiku 5.5 com raciocínio desligado, medido em 144 chamadas
+- [`docs/CONCORRENCIA.md`](docs/CONCORRENCIA.md) — o que o EmpresAqui tem, onde fica descoberto, e por que não vendemos disparo em massa
+
+## Módulos novos
+
+| Arquivo | O que faz |
+|---|---|
+| `sql/006_crm.sql` | CRM de leads: funil como dado, junção polimórfica, timeline com snapshot |
+| `sql/007_processos.sql` | Processos, movimentos do DataJud, publicações do DJEN, monitores |
+| `src/services/processos.ts` | iAndamento descobre pelo CNPJ, DataJud enriquece pelo número |
+| `src/services/jev.ts` | Classificação determinística, sem LLM, com fallback local |
+| `src/services/mensageria.ts` | Resend, poste.io e open-wa — só para o assinante, nunca disparo em massa |

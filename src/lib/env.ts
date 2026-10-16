@@ -14,6 +14,16 @@ const schema = z.object({
   NEXUS_API_KEY: z.string().optional(),
   DJEN_BASE_URL: z.string().optional(),
   DATAJUD_API_KEY: z.string().optional(),
+  IANDAMENTO_BASE_URL: z.string().optional(),
+  IANDAMENTO_API_KEY: z.string().optional(),
+  JEV_BASE_URL: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_REMETENTE: z.string().default("no-reply@fisco.judinfo.com.br"),
+  POSTEIO_BASE_URL: z.string().optional(),
+  POSTEIO_AUTH: z.string().optional(),
+  OPENWA_BASE_URL: z.string().optional(),
+  OPENWA_API_KEY: z.string().optional(),
+  ASAAS_API_KEY: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);
