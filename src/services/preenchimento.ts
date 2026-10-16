@@ -118,7 +118,7 @@ async function chamar(modelo: string, ficha: string): Promise<ResultadoPreenchim
 export async function preencher(ficha: string): Promise<ResultadoPreenchimento> {
   try {
     return await chamar(env.MODELO_PREENCHIMENTO, ficha);
-  } catch (e) {
+  } catch {
     // A hierarquia configurada manda: so cai para o alternativo se o
     // principal falhar de fato.
     return await chamar(env.MODELO_PREENCHIMENTO_FALLBACK, ficha);

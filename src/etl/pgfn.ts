@@ -13,6 +13,7 @@
  */
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
+import type { Writable } from "node:stream";
 import copy from "pg-copy-streams";
 import { pool } from "../db/pool.js";
 
@@ -41,13 +42,13 @@ export async function carregarCsv(caminho: string, origem: keyof typeof BASES, d
     await c.query("BEGIN");
     await c.query(`CREATE TEMP TABLE stage_divida (LIKE fisco.divida_inscricao INCLUDING DEFAULTS)
                    ON COMMIT DROP`);
-    const stream = c.query(copy.from(
+    const alvo = c.query(copy.from(
       `COPY stage_divida (cnpj, cnpj_raiz, uf, origem, numero_inscricao, tipo_devedor,
                           tipo_situacao, situacao, receita_principal, tributo,
                           valor_consolidado, data_inscricao, unidade_origem, data_referencia)
        FROM STDIN WITH (FORMAT csv, DELIMITER ';', HEADER true, ENCODING 'LATIN1')`
-    ));
-    await pipeline(createReadStream(caminho), stream);
+    ) as unknown as never) as unknown as Writable;
+    await pipeline(createReadStream(caminho), alvo);
     // substitui a posicao anterior daquela origem, nao acumula trimestres
     await c.query(`DELETE FROM fisco.divida_inscricao WHERE origem = $1`, [origem]);
     await c.query(`INSERT INTO fisco.divida_inscricao SELECT * FROM stage_divida`);
