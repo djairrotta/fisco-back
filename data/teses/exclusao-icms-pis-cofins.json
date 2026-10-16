@@ -1,0 +1,34 @@
+{
+  "slug": "exclusao-icms-pis-cofins",
+  "versao": 1,
+  "nome": "Exclusão do ICMS da base de cálculo do PIS e da COFINS",
+  "tributo": "PIS/COFINS",
+  "fundamento_legal": "CF art. 195, I, b; Lei 9.718/98; RE 574.706/PR",
+  "maturidade": "modulada",
+  "temas": [{"tribunal": "STF", "tema": 69}],
+  "processos": [{"tribunal": "STF", "numero": "RE 574.706/PR"}],
+  "cnae_excluidos": null,
+  "regimes": ["Lucro Presumido/Real"],
+  "portes": [3, 5],
+  "exige_divida": false,
+  "tributos_divida": ["PIS", "COFINS"],
+  "prescricao_meses": 60,
+  "formula_estimativa": {
+    "tipo": "proxy_faturamento",
+    "base": "faturamento_presumido_por_porte_cnae",
+    "aliquota": 0.0925,
+    "parcela_icms": 0.18,
+    "aviso": "ESTIMATIVA. Nao e valor devido. Calculo real so pelo agente tributario do NEXUS."
+  },
+  "peso": 1.5,
+  "modelo_peca": "inicial-exclusao-icms",
+  "checklist_docs": [
+    "Contrato social e ultima alteracao",
+    "Procuracao com poderes especificos",
+    "EFD-Contribuicoes dos ultimos 60 meses",
+    "DCTF do periodo",
+    "Notas fiscais de saida por amostragem",
+    "Comprovante de recolhimento de PIS/COFINS"
+  ],
+  "observacao_maturidade": "Modulado pelo STF em 13/05/2021: efeitos a partir de 15/03/2017, salvo acoes ajuizadas antes. A data de ajuizamento muda o periodo recuperavel — por isso o campo exige_analise_advogado existe."
+}

@@ -1,0 +1,17 @@
+{
+  "slug": "contribuicoes-terceiros-limite-20sm",
+  "versao": 1,
+  "nome": "Limitação da base das contribuições a terceiros a 20 salários mínimos",
+  "tributo": "Contribuições de terceiros",
+  "fundamento_legal": "Lei 6.950/81 art. 4º, par. único; DL 2.318/86",
+  "maturidade": "derrotada",
+  "temas": [{"tribunal": "STJ", "tema": 1079}],
+  "processos": [{"tribunal": "STJ", "numero": "REsp 1.898.532/CE"}],
+  "regimes": ["Lucro Presumido/Real"],
+  "portes": [3, 5],
+  "exige_divida": false,
+  "prescricao_meses": 60,
+  "peso": 0.0,
+  "ativa": false,
+  "observacao_maturidade": "EXEMPLO PROPOSITAL DE TESE DERROTADA. O STJ julgou o Tema 1079 contra o contribuinte. Esta tese permanece no banco marcada como derrotada justamente para provar o mecanismo: score zerado, fora do mapa, sem alterar uma linha de codigo. Conferir a situacao atual pelo Hermes antes de qualquer uso."
+}
