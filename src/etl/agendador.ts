@@ -19,7 +19,7 @@ import { pool, q } from "../db/pool.js";
 import { env } from "../lib/env.js";
 import { carregarBase, BASES, type Origem } from "./pgfn.js";
 import { atualizarViews } from "./refresh-views.js";
-import { versaoDisponivelReceita, carregarReceita, carregarSocios } from "./receita-cnpj.js";
+import { versaoDisponivelReceita, carregarReceita, carregarSocios, carregarEmpresasSimples } from "./receita-cnpj.js";
 
 const RAIZ_PGFN = "https://dadosabertos.pgfn.gov.br";
 
@@ -114,6 +114,7 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
       // os dois alimentam leads e cruzamentos, entao vao juntos.
       await carregarReceita(disponivel);
       await carregarSocios(disponivel);
+      await carregarEmpresasSimples(disponivel);
     }
     await pool.query(
       `UPDATE fonte_dados SET versao_carregada = $2, ultima_carga = now() WHERE chave = $1`,

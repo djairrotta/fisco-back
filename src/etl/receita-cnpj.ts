@@ -425,13 +425,136 @@ export async function carregarSocios(periodo: string) {
   }
 }
 
+// =====================================================================
+// EMPRESAS e SIMPLES: porte, capital, natureza e regime, para os filtros.
+//
+// Empresas (7 colunas): 0 CNPJ_BASICO 1 RAZAO_SOCIAL 2 NATUREZA_JURIDICA
+//   3 QUALIFICACAO_RESPONSAVEL 4 CAPITAL_SOCIAL ("1000,00") 5 PORTE
+//   (00 nao informado, 01 ME, 03 EPP, 05 demais) 6 ENTE_FEDERATIVO
+// Simples (7 colunas): 0 CNPJ_BASICO 1 OPCAO_SIMPLES (S/N) 2 DATA_OPCAO
+//   3 DATA_EXCLUSAO 4 OPCAO_MEI (S/N) 5 DATA_OPCAO_MEI 6 DATA_EXCLUSAO_MEI
+// =====================================================================
+
+/** Uma linha de Empresas -> (raiz, razao, natureza, capital, porte). Exportado para teste. */
+export function linhaEmpresa(linha: string): string[] | null {
+  const p = linha.split(";").map((x) => x.replace(/^"|"$/g, "").trim());
+  if (p.length < 6) return null;
+  const raiz = (p[0] || "").toUpperCase().padStart(8, "0");
+  if (!/^[0-9A-Z]{8}$/.test(raiz)) return null;
+  const capital = Number((p[4] || "").replace(/\./g, "").replace(",", "."));
+  const porte = /^\d+$/.test(p[5] || "") ? String(Number(p[5])) : "";
+  return [raiz, p[1] || "", /^\d{4}$/.test(p[2] || "") ? p[2] : "",
+          Number.isFinite(capital) ? String(capital) : "", porte];
+}
+
+export function linhaSimples(linha: string): string[] | null {
+  const p = linha.split(";").map((x) => x.replace(/^"|"$/g, "").trim());
+  if (p.length < 5) return null;
+  const raiz = (p[0] || "").toUpperCase().padStart(8, "0");
+  if (!/^[0-9A-Z]{8}$/.test(raiz)) return null;
+  return [raiz, sim(p[1]) ? "true" : "false", dataRfb(p[2] || ""), dataRfb(p[3] || ""), sim(p[4]) ? "true" : "false"];
+}
+
+/** Le os zips de uma familia, filtra por raiz devedora e devolve as linhas convertidas. */
+async function* linhasDaFamilia(
+  periodo: string, dir: string, nomes: string[], filtro: RaizesDevedoras | null,
+  conv: (l: string) => string[] | null, contar: { lidas: number; aceitas: number },
+): AsyncGenerator<string[]> {
+  for (const nome of nomes) {
+    const local = join(dir, nome);
+    const bytes = await baixar(`${RAIZ}/${periodo}/${nome}`, local);
+    console.log(`[rfb] ${nome}: ${(bytes / 1e6).toFixed(0)} MB`);
+    const zip = await unzipper.Open.file(local);
+    for (const e of zip.files) {
+      if (e.type !== "File") continue;
+      const rl = createInterface({ input: e.stream().setEncoding("latin1") as any, crlfDelay: Infinity });
+      for await (const bruta of rl) {
+        if (!bruta.trim()) continue;
+        contar.lidas++;
+        if (filtro && !filtro.tem(raizDaLinha(bruta))) continue;
+        const l = conv(bruta);
+        if (!l) continue;
+        contar.aceitas++;
+        yield l;
+      }
+    }
+    await rm(local, { force: true });
+  }
+}
+
+/**
+ * Empresas + Simples numa tabela so (empresa_rfb). Em memoria por raiz
+ * devedora: ~4 milhoes de linhas curtas. Depois um COPY e um upsert.
+ */
+export async function carregarEmpresasSimples(periodo: string) {
+  const dir = await mkdtemp(join(tmpdir(), "rfb-emp-"));
+  const atualizado = `${periodo}-01`;
+  const cli = await pool.connect();
+  const contEmp = { lidas: 0, aceitas: 0 }, contSim = { lidas: 0, aceitas: 0 };
+  try {
+    const filtro = soDevedoras() ? await RaizesDevedoras.doBanco(cli) : null;
+    await cli.query("BEGIN");
+    await cli.query("SET LOCAL statement_timeout = 0");
+    await cli.query("SET LOCAL lock_timeout = '5min'");
+    await cli.query(`CREATE TEMP TABLE stage_emp (cnpj_raiz char(8), razao_social text,
+                       natureza_juridica char(4), capital_social numeric(18,2), porte smallint) ON COMMIT DROP`);
+    await cli.query(`CREATE TEMP TABLE stage_sim (cnpj_raiz char(8), opcao_simples boolean,
+                       data_opcao_simples date, data_exclusao_simples date, opcao_mei boolean) ON COMMIT DROP`);
+
+    for (const [tabela, nomes, conv, cont] of [
+      ["stage_emp", Array.from({ length: 10 }, (_, i) => `Empresas${i}.zip`), linhaEmpresa, contEmp],
+      ["stage_sim", ["Simples.zip"], linhaSimples, contSim],
+    ] as const) {
+      const destino = cli.query(copy.from(
+        `COPY ${tabela} FROM STDIN WITH (FORMAT csv, DELIMITER ';', NULL '')`) as unknown as never) as unknown as Writable;
+      let erro: Error | null = null;
+      destino.on("error", (e: Error) => { erro = e; });
+      for await (const l of linhasDaFamilia(periodo, dir, [...nomes], filtro, conv, cont)) {
+        if (erro) throw erro;
+        if (!destino.write(l.map(csv).join(";") + "\n")) await new Promise<void>((r) => destino.once("drain", () => r()));
+      }
+      destino.end();
+      await new Promise<void>((ok, err) => { if (erro) return err(erro); destino.on("finish", () => ok()); destino.on("error", err); });
+    }
+
+    await cli.query(`DELETE FROM fisco.empresa_rfb`);
+    await cli.query(
+      `INSERT INTO fisco.empresa_rfb (cnpj_raiz, razao_social, natureza_juridica, capital_social, porte,
+              opcao_simples, data_opcao_simples, data_exclusao_simples, opcao_mei, atualizado_em)
+       SELECT DISTINCT ON (coalesce(e.cnpj_raiz, s.cnpj_raiz))
+              coalesce(e.cnpj_raiz, s.cnpj_raiz), e.razao_social, e.natureza_juridica, e.capital_social, e.porte,
+              coalesce(s.opcao_simples, false), s.data_opcao_simples, s.data_exclusao_simples,
+              coalesce(s.opcao_mei, false), $1::date
+         FROM stage_emp e FULL JOIN stage_sim s ON s.cnpj_raiz = e.cnpj_raiz
+        ORDER BY coalesce(e.cnpj_raiz, s.cnpj_raiz)`, [atualizado]);
+    // Razao social oficial preenche o estabelecimento (a carga de
+    // Estabelecimentos nao traz razao social).
+    await cli.query(
+      `UPDATE fisco.estabelecimento e SET razao_social = r.razao_social,
+              porte = r.porte, capital_social = r.capital_social,
+              opcao_simples = r.opcao_simples, opcao_mei = r.opcao_mei
+         FROM fisco.empresa_rfb r WHERE r.cnpj_raiz = e.cnpj_raiz`);
+    await cli.query("COMMIT");
+    console.log(`[rfb] empresas ${periodo}: ${contEmp.lidas} lidas, ${contEmp.aceitas} aceitas; ` +
+                `simples: ${contSim.lidas} lidas, ${contSim.aceitas} aceitas`);
+    return { empresas: contEmp, simples: contSim };
+  } catch (e) {
+    await cli.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    cli.release();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  // uso: node dist/etl/receita-cnpj.js [periodo] [estabelecimentos|socios|tudo]
+  // uso: node dist/etl/receita-cnpj.js [periodo] [estabelecimentos|socios|empresas|tudo]
   const periodo = process.argv[2] ?? (await versaoDisponivelReceita());
   const alvo = (process.argv[3] ?? "tudo").toLowerCase();
   if (!periodo) { console.error("nenhum período disponível"); process.exit(1); }
   console.log(`[rfb] período ${periodo}, alvo ${alvo}`);
   if (alvo === "tudo" || alvo.startsWith("estab")) await carregarReceita(periodo);
   if (alvo === "tudo" || alvo.startsWith("soc")) await carregarSocios(periodo);
+  if (alvo === "tudo" || alvo.startsWith("emp") || alvo.startsWith("simp")) await carregarEmpresasSimples(periodo);
   await pool.end();
 }

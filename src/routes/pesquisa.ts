@@ -18,7 +18,8 @@ interface Filtros {
   q?: string; uf?: string | string[]; municipio?: string; valor_min?: string; valor_max?: string;
   tributo?: string | string[]; ajuizada?: string; contato?: string; cnae?: string;
   ativa?: string; desde?: string; ate?: string; ordem?: string; pagina?: string; limite?: string;
-  cadastro?: string;
+  cadastro?: string; regime?: string | string[]; porte?: string | string[];
+  socios_min?: string; socios_max?: string; capital_min?: string; capital_max?: string;
 }
 
 const ORDENS: Record<string, string> = {
@@ -29,6 +30,8 @@ const ORDENS: Record<string, string> = {
   recentes: "inscricao_mais_recente DESC NULLS LAST",
   inscricoes: "qtd_inscricoes DESC",
   ajuizado: "valor_ajuizado DESC",
+  capital: "capital_social DESC NULLS LAST",
+  socios: "qtd_socios DESC NULLS LAST",
 };
 
 /** Monta o WHERE com parametros posicionais. Exportado para teste. */
@@ -50,7 +53,19 @@ export function montarFiltro(f: Filtros) {
   }
   const ufs = lista(f.uf).map((u) => u.toUpperCase()).filter((u) => /^[A-Z]{2}$/.test(u));
   if (ufs.length) add("uf = ANY(?)", ufs);
-  if (f.municipio && /^\d{7}$/.test(f.municipio)) add("municipio_ibge = ?", f.municipio);
+  // Uma cidade ou varias (codigos IBGE separados por virgula).
+  const municipios = lista(f.municipio).filter((m) => /^\d{7}$/.test(m));
+  if (municipios.length) add("municipio_ibge = ANY(?)", municipios);
+  // Regime como a Receita publica: MEI, Simples ou fora do Simples.
+  const regimes = lista(f.regime).filter((r) => ["mei", "simples", "demais"].includes(r));
+  if (regimes.length) add("regime = ANY(?)", regimes);
+  // Porte: 1 ME, 3 EPP, 5 demais.
+  const portes = lista(f.porte).filter((x) => ["1", "3", "5"].includes(x)).map(Number);
+  if (portes.length) add("porte = ANY(?::smallint[])", portes);
+  if (f.socios_min && Number(f.socios_min) > 0) add("qtd_socios >= ?", Number(f.socios_min));
+  if (f.socios_max && Number(f.socios_max) > 0) add("qtd_socios <= ?", Number(f.socios_max));
+  if (f.capital_min && Number(f.capital_min) > 0) add("capital_social >= ?", Number(f.capital_min));
+  if (f.capital_max && Number(f.capital_max) > 0) add("capital_social <= ?", Number(f.capital_max));
   if (f.valor_min && Number(f.valor_min) > 0) add("valor_total >= ?", Number(f.valor_min));
   if (f.valor_max && Number(f.valor_max) > 0) add("valor_total <= ?", Number(f.valor_max));
   const tributos = lista(f.tributo);
@@ -71,7 +86,8 @@ export function montarFiltro(f: Filtros) {
 
 const COLUNAS_LISTA = `cnpj_raiz, cnpj, nome, nome_fantasia, uf, municipio, municipio_ibge,
   qtd_inscricoes, valor_total, valor_ajuizado, tem_ajuizada, tributo_principal, tributos,
-  inscricao_mais_antiga, data_referencia, telefone, email, cnae_principal, situacao, tem_cadastro`;
+  inscricao_mais_antiga, data_referencia, telefone, email, cnae_principal, situacao, tem_cadastro,
+  porte, regime, qtd_socios, capital_social`;
 
 const LIMITE_CONTAGEM = 100_000;
 
@@ -133,11 +149,11 @@ export default async function rotasPesquisa(app: FastifyInstance) {
     const linhas = await q<any>(
       `SELECT cnpj, nome, nome_fantasia, uf, municipio, valor_total, valor_ajuizado,
               qtd_inscricoes, tributo_principal, inscricao_mais_antiga, telefone, email,
-              cnae_principal, data_referencia
+              cnae_principal, data_referencia, regime, porte, qtd_socios, capital_social
          FROM mv_devedor ${where} ORDER BY ${ordem} LIMIT 5000`, params);
     const cab = ["CNPJ", "Razão social", "Nome fantasia", "UF", "Município", "Dívida total",
       "Dívida ajuizada", "Inscrições", "Tributo principal", "Inscrição mais antiga",
-      "Telefone", "E-mail", "CNAE", "Posição da base"];
+      "Telefone", "E-mail", "CNAE", "Posição da base", "Regime", "Porte", "Sócios", "Capital social"];
     const esc = (v: unknown) => {
       if (v == null) return "";
       const s = v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
@@ -148,11 +164,29 @@ export default async function rotasPesquisa(app: FastifyInstance) {
       String(l.valor_total).replace(".", ","), String(l.valor_ajuizado).replace(".", ","),
       l.qtd_inscricoes, l.tributo_principal, l.inscricao_mais_antiga, l.telefone, l.email,
       l.cnae_principal, l.data_referencia,
+      ({ mei: "MEI", simples: "Simples Nacional", demais: "Fora do Simples" } as Record<string, string>)[l.regime] ?? "",
+      ({ 1: "ME", 3: "EPP", 5: "Demais" } as Record<number, string>)[l.porte] ?? "",
+      l.qtd_socios, l.capital_social == null ? "" : String(l.capital_social).replace(".", ","),
     ].map(esc).join(";"))].join("\r\n");
     reply.header("content-type", "text/csv; charset=utf-8");
     reply.header("content-disposition", `attachment; filename="devedores-${new Date().toISOString().slice(0, 10)}.csv"`);
     // BOM: sem ele o Excel em portugues abre o UTF-8 como Latin-1.
     return "﻿" + corpo;
+  });
+
+  // Municipios para o filtro (autocompletar e nomes dos ja escolhidos).
+  app.get<{ Querystring: { q?: string; uf?: string; ids?: string } }>("/api/municipios", auth, async (req) => {
+    const todos = await listaMunicipios();
+    const ids = lista(req.query.ids);
+    if (ids.length) return todos.filter((m) => ids.includes(m.ibge)).map(({ chave, ...m }) => m);
+    const t = chaveSimples(req.query.q || "");
+    const uf = (req.query.uf || "").toUpperCase();
+    if (t.length < 2 && !uf) return [];
+    return todos
+      .filter((m) => (!uf || m.uf === uf) && (!t || m.chave.includes(t)))
+      .sort((a, b) => Number(!a.chave.startsWith(t)) - Number(!b.chave.startsWith(t)) || a.nome.localeCompare(b.nome))
+      .slice(0, 30)
+      .map(({ chave, ...m }) => m);
   });
 
   // Tributos existentes, para o filtro.
@@ -287,7 +321,7 @@ async function montarPainel(uf: string) {
             max(data_referencia) AS data_referencia
        FROM mv_devedor ${w}`, p);
 
-  const [porUf, porTributo, faixas, porAno, topMunicipios, topDevedores, pessoas] = await Promise.all([
+  const [porUf, porTributo, faixas, porAno, topMunicipios, topDevedores, pessoas, porRegime, porPorte] = await Promise.all([
     q(`SELECT uf, count(*) AS empresas, sum(valor_total) AS valor_total,
               sum(valor_ajuizado) AS valor_ajuizado
          FROM mv_devedor GROUP BY uf ORDER BY valor_total DESC`),
@@ -320,12 +354,17 @@ async function montarPainel(uf: string) {
          FROM mv_devedor ${w} ORDER BY valor_total DESC LIMIT 10`, p),
     q(`SELECT count(*) AS pessoas, coalesce(sum(valor_total),0) AS valor_total
          FROM mv_divida_pessoa ${w}`, p).catch(() => [{ pessoas: 0, valor_total: 0 }]),
+    q(`SELECT regime, count(*) AS empresas, sum(valor_total) AS valor_total
+         FROM mv_devedor ${w ? w + " AND" : "WHERE"} regime IS NOT NULL GROUP BY regime ORDER BY 2 DESC`, p),
+    q(`SELECT porte, count(*) AS empresas, sum(valor_total) AS valor_total
+         FROM mv_devedor ${w ? w + " AND" : "WHERE"} porte IN (1,3,5) GROUP BY porte ORDER BY porte`, p),
   ]);
 
   return {
     uf: uf || null, totais, por_uf: porUf, por_tributo: porTributo, faixas,
     por_ano: porAno, top_municipios: topMunicipios, top_devedores: topDevedores,
-    pessoas_fisicas: pessoas[0], gerado_em: new Date().toISOString(),
+    pessoas_fisicas: pessoas[0], por_regime: porRegime, por_porte: porPorte,
+    gerado_em: new Date().toISOString(),
   };
 }
 
@@ -394,4 +433,34 @@ export async function aquecerPainel() {
   const t = Date.now();
   await painelCache("painel:", () => montarPainel("")).catch(() => {});
   console.log(`[painel] aquecido em ${Math.round((Date.now() - t) / 1000)}s`);
+}
+
+// ----------------------------------------------------------------------
+// Municipios do IBGE, uma vez por processo. Se o IBGE nao responder, cai
+// no que a base ja conhece (cidades das empresas carregadas).
+// ----------------------------------------------------------------------
+interface Mun { ibge: string; nome: string; uf: string; chave: string }
+let municipios: Promise<Mun[]> | null = null;
+const chaveSimples = (s: string) =>
+  s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+
+function listaMunicipios(): Promise<Mun[]> {
+  municipios ??= (async () => {
+    try {
+      const r = await fetch("https://servicodados.ibge.gov.br/api/v1/localidades/municipios");
+      if (!r.ok) throw new Error(String(r.status));
+      const j = (await r.json()) as any[];
+      return j.map((x) => {
+        const uf = x?.microrregiao?.mesorregiao?.UF?.sigla ?? x?.["regiao-imediata"]?.["regiao-intermediaria"]?.UF?.sigla ?? "";
+        return { ibge: String(x.id), nome: x.nome, uf, chave: chaveSimples(x.nome) };
+      });
+    } catch {
+      municipios = null;   // tenta de novo na proxima chamada
+      const rows = await q<{ ibge: string; nome: string; uf: string }>(
+        `SELECT DISTINCT municipio_ibge AS ibge, municipio AS nome, uf FROM estabelecimento
+          WHERE municipio_ibge IS NOT NULL`).catch(() => []);
+      return rows.map((m) => ({ ...m, chave: chaveSimples(m.nome) }));
+    }
+  })();
+  return municipios;
 }
