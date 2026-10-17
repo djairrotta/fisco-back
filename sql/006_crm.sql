@@ -8,7 +8,10 @@ SET search_path TO fisco, public;
 -- ATOR: quem mexeu e por qual via. Rastreabilidade e barata quando
 -- nasce no schema; cara depois. (padrao ACTOR do Twenty)
 -- ---------------------------------------------------------------------
-CREATE TYPE ator_origem AS ENUM ('MANUAL','IMPORTACAO','API','SISTEMA','AGENTE_IA');
+DO $$ BEGIN
+  CREATE TYPE ator_origem AS ENUM ('MANUAL','IMPORTACAO','API','SISTEMA','AGENTE_IA');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ---------------------------------------------------------------------
 -- FUNIL: campo SELECT configuravel, NAO enum no codigo.
@@ -70,7 +73,10 @@ CREATE INDEX IF NOT EXISTS ix_lead_cnpj  ON lead_juridico (tenant_id, cnpj);
 -- Uma anotacao pode apontar para lead, empresa, processo e peca ao mesmo
 -- tempo, sem duplicar FK nem alterar schema a cada novo tipo.
 -- ---------------------------------------------------------------------
-CREATE TYPE alvo_tipo AS ENUM ('lead','empresa','processo','peca','ordem_calculo');
+DO $$ BEGIN
+  CREATE TYPE alvo_tipo AS ENUM ('lead','empresa','processo','peca','ordem_calculo');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS anotacao (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),

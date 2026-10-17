@@ -1,0 +1,103 @@
+/**
+ * Divida ativa estadual de SP e MG — consulta POR CNPJ, com cache.
+ *
+ * POR QUE NAO E CARGA EM MASSA, como a federal: nao existe download.
+ * Conferido na fonte: a PGE-SP publica planilha agregada de estoque
+ * (inscricoes, recuperacoes, baixas), nao lista de devedor. Em MG a
+ * Resolucao Conjunta SEF/AGE 5.625/2022 manda publicar a lista de
+ * devedores, mas sem formato de download definido. Nos dois casos o
+ * acesso util e consulta individual, que a Infosimples expoe.
+ *
+ * Consequencia de produto: estadual NAO entra no mapa agregado. Entra na
+ * ficha da empresa, sob demanda, e fica em cache porque cada consulta
+ * custa dinheiro e o dado muda devagar.
+ */
+import { env } from "../lib/env.js";
+import { q, pool } from "../db/pool.js";
+
+export type UfEstadual = "SP" | "MG";
+
+const CONSULTA: Record<UfEstadual, string> = {
+  SP: "pge-sp/divida-ativa",
+  MG: "sefaz-mg/divida-ativa",
+};
+
+/** Dado estadual muda devagar; 30 dias evita refazer consulta paga à toa. */
+const VALIDADE_DIAS = 30;
+
+export interface DividaEstadual {
+  uf: UfEstadual;
+  tem_debito: boolean | null;
+  valor_total: number | null;
+  quantidade: number | null;
+  consultado_em: string;
+  cache: boolean;
+  indisponivel?: string;
+}
+
+export async function consultarDividaEstadual(
+  cnpj: string, uf: UfEstadual, forcar = false
+): Promise<DividaEstadual> {
+  const limpo = (cnpj || "").replace(/\D/g, "");
+  if (limpo.length !== 14) throw new Error("CNPJ inválido");
+
+  if (!forcar) {
+    const [c] = await q<any>(
+      `SELECT * FROM divida_estadual
+        WHERE cnpj = $1 AND uf = $2 AND consultado_em > now() - ($3 || ' days')::interval`,
+      [limpo, uf, String(VALIDADE_DIAS)]
+    );
+    if (c) return {
+      uf, tem_debito: c.tem_debito, valor_total: c.valor_total === null ? null : Number(c.valor_total),
+      quantidade: c.quantidade, consultado_em: c.consultado_em, cache: true,
+      ...(c.erro ? { indisponivel: c.erro } : {}),
+    };
+  }
+
+  if (!env.INFOSIMPLES_TOKEN) {
+    return { uf, tem_debito: null, valor_total: null, quantidade: null,
+             consultado_em: new Date().toISOString(), cache: false,
+             indisponivel: "Consulta estadual não configurada." };
+  }
+
+  let tem: boolean | null = null, valor: number | null = null,
+      qtd: number | null = null, detalhe: unknown = null, erro: string | null = null;
+
+  try {
+    const r = await fetch(`${env.INFOSIMPLES_BASE_URL}/${CONSULTA[uf]}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: env.INFOSIMPLES_TOKEN, cnpj: limpo, timeout: 300 }),
+    });
+    const d: any = await r.json().catch(() => ({}));
+    // A Infosimples devolve 200 com `code` proprio; 200 HTTP nao basta.
+    if (d?.code !== 200) {
+      erro = String(d?.code_message ?? `resposta ${r.status}`).slice(0, 200);
+    } else {
+      const itens: any[] = Array.isArray(d.data) ? d.data : [];
+      detalhe = itens;
+      qtd = itens.length;
+      valor = itens.reduce((s, x) => s + (Number(
+        String(x?.valor_total ?? x?.valor ?? 0).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".")
+      ) || 0), 0);
+      tem = qtd > 0 && (valor ?? 0) > 0;
+    }
+  } catch (e) {
+    erro = String(e instanceof Error ? e.message : e).slice(0, 200);
+  }
+
+  await pool.query(
+    `INSERT INTO divida_estadual (cnpj, uf, tem_debito, valor_total, quantidade,
+                                  detalhe, fonte, consultado_em, erro)
+     VALUES ($1,$2,$3,$4,$5,$6,'infosimples', now(), $7)
+     ON CONFLICT (cnpj, uf) DO UPDATE SET
+       tem_debito = EXCLUDED.tem_debito, valor_total = EXCLUDED.valor_total,
+       quantidade = EXCLUDED.quantidade, detalhe = EXCLUDED.detalhe,
+       consultado_em = now(), erro = EXCLUDED.erro`,
+    [limpo, uf, tem, valor, qtd, detalhe ? JSON.stringify(detalhe) : null, erro]
+  );
+
+  return { uf, tem_debito: tem, valor_total: valor, quantidade: qtd,
+           consultado_em: new Date().toISOString(), cache: false,
+           ...(erro ? { indisponivel: erro } : {}) };
+}

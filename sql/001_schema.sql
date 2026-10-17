@@ -3,11 +3,20 @@
 -- Um unico container Postgres atende todos os apps; este schema isola
 -- o produto para nao colidir com os demais.
 -- =====================================================================
+-- REGRA: todo CREATE TYPE neste projeto vai dentro de
+--   DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- CREATE TYPE nao aceita IF NOT EXISTS. Sem essa guarda a migracao
+-- falha na SEGUNDA execucao (SQLSTATE 42710), o boot sai com codigo
+-- nao-zero e o Swarm reverte o deploy sem erro visivel no codigo.
+-- Ja aconteceu uma vez com maturidade_tese. Nao repita.
+
 CREATE SCHEMA IF NOT EXISTS fisco;
 SET search_path TO fisco, public;
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS unaccent;
+-- unaccent REMOVIDA: nome_chave() usa translate(), que e interna do
+-- Postgres. Uma extensao a menos e um modo de falha a menos em banco
+-- onde o papel da aplicacao nao pode criar extensao.
 
 -- ---------------------------------------------------------------------
 -- 1. Cadastro de empresas (base CNPJ da Receita Federal, carga mensal)
@@ -48,7 +57,10 @@ CREATE TABLE IF NOT EXISTS estabelecimento (
 --    REGRA DA PGFN: somar apenas devedor principal; corresponsavel
 --    duplica o valor. Por isso tipo_devedor entra na chave de filtro.
 -- ---------------------------------------------------------------------
-CREATE TYPE origem_divida AS ENUM ('PGFN_GERAL','PGFN_PREV','PGFN_FGTS','PGE_SP','AGE_MG');
+DO $$ BEGIN
+  CREATE TYPE origem_divida AS ENUM ('PGFN_GERAL','PGFN_PREV','PGFN_FGTS','PGE_SP','AGE_MG');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS divida_inscricao (
   id                bigserial,
@@ -73,8 +85,11 @@ CREATE TABLE IF NOT EXISTS divida_inscricao (
 -- 3. Teses: regra determinística versionada. NAO ha LLM aqui.
 --    maturidade decide se a tese aparece no mapa; 'derrotada' zera o score.
 -- ---------------------------------------------------------------------
-CREATE TYPE maturidade_tese AS ENUM
-  ('consolidada_favoravel','em_disputa','modulada','derrotada');
+DO $$ BEGIN
+  CREATE TYPE maturidade_tese AS ENUM
+    ('consolidada_favoravel','em_disputa','modulada','derrotada');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS tese (
   slug              text PRIMARY KEY,
@@ -138,7 +153,10 @@ CREATE TABLE IF NOT EXISTS processo (
 -- ---------------------------------------------------------------------
 -- 5. Multi-tenant: assinantes
 -- ---------------------------------------------------------------------
-CREATE TYPE plano_tipo AS ENUM ('documentacao','com_ia');
+DO $$ BEGIN
+  CREATE TYPE plano_tipo AS ENUM ('documentacao','com_ia');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS tenant (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -6,6 +6,10 @@ import { pool } from "./pool.js";
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "sql");
 const arquivos = (await readdir(raiz)).filter(f => f.endsWith(".sql")).sort();
 
+// Mesma razao do bootstrap: sem lock_timeout uma carga em andamento
+// faz este script esperar para sempre e parecer travado.
+await pool.query("SET lock_timeout = '5min'");
+
 for (const f of arquivos) {
   const sql = await readFile(join(raiz, f), "utf8");
   process.stdout.write(`aplicando ${f} ... `);
