@@ -39,8 +39,20 @@ COMMENT ON COLUMN divida_inscricao.documento_completo IS
 -- A chave de agregação de PF é o melhor disponível, e ainda assim é
 -- aproximada: fragmento + nome + UF. Está documentado como aproximação
 -- para ninguém tratar a contagem de pessoas como exata.
-DROP MATERIALIZED VIEW IF EXISTS mv_divida_pessoa CASCADE;
-CREATE MATERIALIZED VIEW mv_divida_pessoa AS
+-- O DROP ... CASCADE acima derruba mv_uf junto, porque ela depende de
+-- mv_divida_pessoa. Recriar aqui NAO e opcional: sem isto a migracao
+-- deixa o mapa sem a view que a landing inteira consome.
+
+-- GUARDA (021): o DROP ... CASCADE abaixo derrubava mv_divida_pessoa, mv_uf e
+-- mv_socio_devedor a cada boot. So roda quando a versao desta migracao
+-- ainda nao existe (o indice ix_mv_div_pes_nome e criado so aqui).
+DO $guarda$
+BEGIN
+  IF to_regclass('fisco.ix_mv_div_pes_nome') IS NOT NULL THEN
+    RETURN;
+  END IF;
+  EXECUTE $v$DROP MATERIALIZED VIEW IF EXISTS mv_divida_pessoa CASCADE$v$;
+  EXECUTE $v$CREATE MATERIALIZED VIEW mv_divida_pessoa AS
 SELECT
   d.documento, d.nome_devedor AS nome, d.uf,
   count(*)                                AS qtd_inscricoes,
@@ -51,18 +63,13 @@ SELECT
   bool_or(d.ajuizado)                     AS tem_ajuizada
 FROM divida_inscricao d
 WHERE d.tipo_devedor = 1 AND d.tipo_pessoa = 'PF'
-GROUP BY d.documento, d.nome_devedor, d.uf;
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_div_pes
-  ON mv_divida_pessoa (documento, nome, uf);
-CREATE INDEX IF NOT EXISTS ix_mv_div_pes_nome
-  ON mv_divida_pessoa USING gin (nome gin_trgm_ops);
-
--- O DROP ... CASCADE acima derruba mv_uf junto, porque ela depende de
--- mv_divida_pessoa. Recriar aqui NAO e opcional: sem isto a migracao
--- deixa o mapa sem a view que a landing inteira consome.
-DROP MATERIALIZED VIEW IF EXISTS mv_uf;
-CREATE MATERIALIZED VIEW mv_uf AS
+GROUP BY d.documento, d.nome_devedor, d.uf$v$;
+  EXECUTE $v$CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_div_pes
+  ON mv_divida_pessoa (documento, nome, uf)$v$;
+  EXECUTE $v$CREATE INDEX IF NOT EXISTS ix_mv_div_pes_nome
+  ON mv_divida_pessoa USING gin (nome gin_trgm_ops)$v$;
+  EXECUTE $v$DROP MATERIALIZED VIEW IF EXISTS mv_uf$v$;
+  EXECUTE $v$CREATE MATERIALIZED VIEW mv_uf AS
 WITH pj AS (
   SELECT uf, count(*) AS empresas_com_divida, sum(valor_total) AS divida_total,
          max(data_referencia) AS data_referencia
@@ -88,6 +95,6 @@ SELECT
   coalesce(pj.data_referencia, (SELECT max(data_referencia) FROM mv_divida_pessoa))
                                          AS data_referencia
 FROM pj FULL JOIN pf USING (uf)
-LEFT JOIN cadastro c ON c.uf = coalesce(pj.uf, pf.uf);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_uf ON mv_uf (uf);
+LEFT JOIN cadastro c ON c.uf = coalesce(pj.uf, pf.uf)$v$;
+  EXECUTE $v$CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_uf ON mv_uf (uf)$v$;
+END $guarda$;

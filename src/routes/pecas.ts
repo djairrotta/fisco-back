@@ -7,7 +7,9 @@ export default async function rotasPecas(app: FastifyInstance) {
     "/api/pecas",
     { preHandler: [app.authenticate] },
     async (req, reply) => {
-      const tenantId = (req.user as any).tenantId;
+      // O token traz `tenant`, nao `tenantId`: com o nome errado toda peca
+      // caia em 403 "tenant invalido", ate para quem pagou o plano.
+      const tenantId = (req.user as any).tenant;
       const [t] = await q<{ plano: string; pecas_mes: number; pecas_usadas: number }>(
         `SELECT plano, pecas_mes, pecas_usadas FROM tenant WHERE id = $1`, [tenantId]
       );

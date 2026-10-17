@@ -6,7 +6,7 @@ export default async function rotasTeses(app: FastifyInstance) {
     // Tese derrotada nunca aparece no mapa, mas continua visivel no banco
     // de teses com o selo — o advogado precisa saber que ela caiu.
     return q(`SELECT slug, nome, tributo, maturidade, fundamento_legal,
-                     verificada_em, checklist_docs
+                     verificada_em, checklist_docs, tributos_divida
                 FROM tese WHERE ativa ORDER BY maturidade, nome`);
   });
 

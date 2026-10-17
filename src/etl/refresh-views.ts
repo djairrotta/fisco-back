@@ -14,7 +14,7 @@
 import { pool } from "../db/pool.js";
 
 const VIEWS = ["mv_divida_empresa", "mv_divida_pessoa", "mv_municipio",
-               "mv_municipio_tributo", "mv_uf", "mv_socio_devedor"];
+               "mv_municipio_tributo", "mv_uf", "mv_socio_devedor", "mv_devedor"];
 
 export async function atualizarViews() {
   const ausentes: string[] = [];

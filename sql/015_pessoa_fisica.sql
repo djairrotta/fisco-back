@@ -46,10 +46,27 @@ CREATE INDEX IF NOT EXISTS ix_divida_documento
   ON divida_inscricao (documento) WHERE tipo_devedor = 1;
 
 -- --- Agregados de EMPRESA: agora explicitamente só PJ ----------------
-DROP MATERIALIZED VIEW IF EXISTS mv_uf;
-DROP MATERIALIZED VIEW IF EXISTS mv_divida_empresa CASCADE;
+-- mv_municipio depende de mv_divida_empresa, entao o DROP ... CASCADE
+-- acima a derruba junto. Recriar aqui, senao a migracao deixa as paginas
+-- de cidade sem a view que elas consomem -- e o refresh so avisa que ela
+-- sumiu, nao a traz de volta.
+-- --- Agregado de PESSOA FÍSICA, separado --------------------------
+-- Agrupa pelo documento, não pela raiz: CPF não tem raiz.
+-- --- mv_uf: empresa e pessoa lado a lado, NUNCA somadas -------------
 
-CREATE MATERIALIZED VIEW mv_divida_empresa AS
+-- GUARDA (021): este bloco roda a cada boot. Sem a guarda ele apagava e
+-- recalculava mv_divida_empresa, mv_municipio e mv_uf em TODO deploy, dentro
+-- do limite de tempo do boot, sobre 30 milhoes de linhas. So recria quando
+-- a view ainda tem a definicao antiga (sem o filtro de tipo_pessoa).
+DO $guarda$
+BEGIN
+  IF to_regclass('fisco.mv_divida_empresa') IS NOT NULL
+     AND pg_get_viewdef('fisco.mv_divida_empresa'::regclass) ILIKE '%tipo_pessoa%' THEN
+    RETURN;
+  END IF;
+  EXECUTE $v$DROP MATERIALIZED VIEW IF EXISTS mv_uf$v$;
+  EXECUTE $v$DROP MATERIALIZED VIEW IF EXISTS mv_divida_empresa CASCADE$v$;
+  EXECUTE $v$CREATE MATERIALIZED VIEW mv_divida_empresa AS
 SELECT
   d.cnpj_raiz, d.uf,
   count(*)                                 AS qtd_inscricoes,
@@ -62,15 +79,9 @@ SELECT
   bool_or(d.ajuizado)                      AS tem_ajuizada
 FROM divida_inscricao d
 WHERE d.tipo_devedor = 1 AND d.tipo_pessoa = 'PJ'
-GROUP BY d.cnpj_raiz, d.uf;
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_div_emp ON mv_divida_empresa (cnpj_raiz, uf);
-
--- mv_municipio depende de mv_divida_empresa, entao o DROP ... CASCADE
--- acima a derruba junto. Recriar aqui, senao a migracao deixa as paginas
--- de cidade sem a view que elas consomem -- e o refresh so avisa que ela
--- sumiu, nao a traz de volta.
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_municipio AS
+GROUP BY d.cnpj_raiz, d.uf$v$;
+  EXECUTE $v$CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_div_emp ON mv_divida_empresa (cnpj_raiz, uf)$v$;
+  EXECUTE $v$CREATE MATERIALIZED VIEW IF NOT EXISTS mv_municipio AS
 SELECT
   e.uf,
   e.municipio_ibge,
@@ -86,13 +97,9 @@ FROM estabelecimento e
 LEFT JOIN mv_divida_empresa v
        ON v.cnpj_raiz = e.cnpj_raiz AND v.uf = e.uf
 WHERE e.matriz
-GROUP BY e.uf, e.municipio_ibge;
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_mun ON mv_municipio (uf, municipio_ibge);
-
--- --- Agregado de PESSOA FÍSICA, separado --------------------------
--- Agrupa pelo documento, não pela raiz: CPF não tem raiz.
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_divida_pessoa AS
+GROUP BY e.uf, e.municipio_ibge$v$;
+  EXECUTE $v$CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_mun ON mv_municipio (uf, municipio_ibge)$v$;
+  EXECUTE $v$CREATE MATERIALIZED VIEW IF NOT EXISTS mv_divida_pessoa AS
 SELECT
   d.documento, d.uf,
   max(d.nome_devedor)                      AS nome,
@@ -104,12 +111,9 @@ SELECT
   bool_or(d.ajuizado)                      AS tem_ajuizada
 FROM divida_inscricao d
 WHERE d.tipo_devedor = 1 AND d.tipo_pessoa = 'PF'
-GROUP BY d.documento, d.uf;
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_div_pes ON mv_divida_pessoa (documento, uf);
-
--- --- mv_uf: empresa e pessoa lado a lado, NUNCA somadas -------------
-CREATE MATERIALIZED VIEW mv_uf AS
+GROUP BY d.documento, d.uf$v$;
+  EXECUTE $v$CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_div_pes ON mv_divida_pessoa (documento, uf)$v$;
+  EXECUTE $v$CREATE MATERIALIZED VIEW mv_uf AS
 WITH pj AS (
   SELECT uf, count(*) AS empresas_com_divida, sum(valor_total) AS divida_total,
          max(data_referencia) AS data_referencia
@@ -135,6 +139,6 @@ SELECT
   coalesce(pj.data_referencia, (SELECT max(data_referencia) FROM mv_divida_pessoa))
                                          AS data_referencia
 FROM pj FULL JOIN pf USING (uf)
-LEFT JOIN cadastro c ON c.uf = coalesce(pj.uf, pf.uf);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_uf ON mv_uf (uf);
+LEFT JOIN cadastro c ON c.uf = coalesce(pj.uf, pf.uf)$v$;
+  EXECUTE $v$CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_uf ON mv_uf (uf)$v$;
+END $guarda$;

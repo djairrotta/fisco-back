@@ -19,7 +19,7 @@ import { pool, q } from "../db/pool.js";
 import { env } from "../lib/env.js";
 import { carregarBase, BASES, type Origem } from "./pgfn.js";
 import { atualizarViews } from "./refresh-views.js";
-import { versaoDisponivelReceita, carregarReceita } from "./receita-cnpj.js";
+import { versaoDisponivelReceita, carregarReceita, carregarSocios } from "./receita-cnpj.js";
 
 const RAIZ_PGFN = "https://dadosabertos.pgfn.gov.br";
 
@@ -87,6 +87,20 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
         WHERE chave = $1`, [chave, disponivel]);
 
     if (!disponivel) { console.log(`[agendador] ${chave}: nada publicado`); return false; }
+    // Carga feita antes de o agendador existir (ou pela linha de comando)
+    // nao gravou versao_carregada. Sem isto o agendador recarregaria 1,4 GB
+    // que ja estao no banco. A tabela carga_etl sabe o que terminou bem.
+    if (!f.versao_carregada && ehPgfn) {
+      const [c] = await q<{ periodo: string }>(
+        `SELECT periodo FROM carga_etl
+          WHERE origem = $1 AND terminou_em IS NOT NULL AND erro IS NULL
+          ORDER BY terminou_em DESC LIMIT 1`, [chave]);
+      if (c) {
+        f.versao_carregada = c.periodo;
+        await pool.query(`UPDATE fonte_dados SET versao_carregada = $2 WHERE chave = $1`, [chave, c.periodo]);
+      }
+    }
+
     if (disponivel === f.versao_carregada) {
       console.log(`[agendador] ${chave}: ${disponivel} já carregado`);
       return false;
@@ -96,7 +110,10 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
     if (ehPgfn) {
       await carregarBase(chave as Origem, disponivel, dataRefDoTrimestre(disponivel));
     } else {
+      // Cadastro (endereco, cidade, telefone, e-mail) e quadro societario:
+      // os dois alimentam leads e cruzamentos, entao vao juntos.
       await carregarReceita(disponivel);
+      await carregarSocios(disponivel);
     }
     await pool.query(
       `UPDATE fonte_dados SET versao_carregada = $2, ultima_carga = now() WHERE chave = $1`,

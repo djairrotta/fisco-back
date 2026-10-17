@@ -48,6 +48,19 @@ export type Origem = keyof typeof BASES;
 
 const RAIZ = "https://dadosabertos.pgfn.gov.br";
 
+/**
+ * O tributo depende da BASE antes da receita. Na Previdenciaria a coluna
+ * TIPO_CREDITO traz "OUTROS", "AFERICAO INDIRETA", "SOLIDARIEDADE"... --
+ * o tipo do lancamento, nao o tributo. Normalizar so pela receita jogava
+ * 3,6 milhoes de inscricoes previdenciarias em "Outros", e o filtro por
+ * contribuicao previdenciaria (a tese mais trabalhada) nao achava nada.
+ */
+export function tributoDaLinha(origem: string, receita: string): string {
+  if (origem === "PGFN_PREV") return "Contribuição Previdenciária";
+  if (origem === "PGFN_FGTS") return "FGTS";
+  return normalizarTributo(receita || origem);
+}
+
 export function normalizarTributo(receita: string): string {
   const r = (receita || "").toUpperCase();
   if (r.includes("COFINS")) return "COFINS";
@@ -138,24 +151,32 @@ export function transformarLinha(
   // os 6 digitos do meio. Por isso nao da para normalizar os dois do
   // mesmo jeito -- tirar os nao-digitos de um CPF mascarado devolve 6
   // digitos, que nao e CPF nenhum.
+  // CNPJ ALFANUMERICO (Receita, a partir de julho/2026): os 12 primeiros
+  // caracteres podem ser letras A-Z; so os 2 verificadores sao digitos.
+  // Tirar "nao-digitos" apagaria as letras e mataria esses CNPJs. E a
+  // letra X, que a PGFN usa na mascara do CPF, tambem e letra valida de
+  // CNPJ: por isso a mascara so vale para PF.
   const bruto = v("CPF_CNPJ").trim();
   const digitos = bruto.replace(/\D/g, "");
-  const mascarado = /[X*]/i.test(bruto);
+  const alnum = bruto.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  const pareceCnpj = /^[0-9A-Z]{12}[0-9]{2}$/.test(alnum) && !bruto.includes("*")
+    && !/^X{3}/i.test(alnum);
   const rotulo = v("TIPO_PESSOA");
   let tipoPessoa: "PJ" | "PF";
   if (/jur/i.test(rotulo)) tipoPessoa = "PJ";
   else if (/f[ií]s/i.test(rotulo)) tipoPessoa = "PF";
-  else if (digitos.length === 14 && !mascarado) {
+  else if (pareceCnpj) {
     tipoPessoa = "PJ"; anotar?.("tipo_pessoa_desconhecido");
-  } else if (mascarado || digitos.length === 11) {
+  } else if (/[X*]/i.test(bruto) || digitos.length === 11) {
     tipoPessoa = "PF"; anotar?.("tipo_pessoa_desconhecido");
   } else { anotar?.("tipo_pessoa_desconhecido"); return null; }
 
   // PJ precisa dos 14 digitos. PF guarda o valor PUBLICADO, mascara e
   // tudo: 'XXX878.325XX' ninguem confunde com CPF, '878325' alguem usaria
   // como chave e erraria.
-  const doc = tipoPessoa === "PJ" ? digitos : bruto;
-  if (tipoPessoa === "PJ" && digitos.length !== 14) {
+  const mascarado = tipoPessoa === "PF" && /[X*]/i.test(bruto);
+  const doc = tipoPessoa === "PJ" ? alnum : bruto;
+  if (tipoPessoa === "PJ" && !/^[0-9A-Z]{12}[0-9]{2}$/.test(doc)) {
     anotar?.("documento_invalido"); return null;
   }
   if (tipoPessoa === "PF" && !doc) { anotar?.("documento_invalido"); return null; }
@@ -188,7 +209,7 @@ export function transformarLinha(
     v("TIPO_SITUACAO_INSCRICAO"),
     v("SITUACAO_INSCRICAO"),
     receita,
-    normalizarTributo(receita || origem),
+    tributoDaLinha(origem, receita),
     String(valor),
     dataIso(v("DATA_INSCRICAO")),
     unidade,
@@ -255,7 +276,20 @@ export async function carregarBase(origem: Origem, periodo: string, dataRef: str
     const bytes = await baixar(`${RAIZ}/${periodo}/${BASES[origem]}`, zipLocal);
     console.log(`[pgfn] ${origem} ${periodo}: ${(bytes / 1e6).toFixed(1)} MB baixados`);
 
+    // Os SET vem ANTES do COPY, nunca depois. Com o COPY FROM STDIN aberto,
+    // qualquer outra query nesta conexao entra na fila atras dele; o COPY
+    // espera dados que so viriam depois do await dessa query, e as duas
+    // pontas ficam esperando uma a outra para sempre. Foi exatamente o que
+    // aconteceu: a carga travava sem erro, a 0% de CPU, segurando a
+    // transacao aberta.
+    // SET LOCAL, dentro da transacao: vale so para esta carga e some no
+    // COMMIT/ROLLBACK. SET simples voltaria ao pool com a conexao e
+    // contaminaria a proxima consulta da API (o mesmo tipo de vazamento que
+    // ja derrubou a producao, no sentido inverso).
+    // Uma carga de 1,4 GB nao cabe em limite de minutos.
     await cli.query("BEGIN");
+    await cli.query("SET LOCAL statement_timeout = 0");
+    await cli.query("SET LOCAL lock_timeout = '5min'");
     await cli.query(`CREATE TEMP TABLE stage_divida
                      (LIKE fisco.divida_inscricao INCLUDING DEFAULTS) ON COMMIT DROP`);
     const destino = cli.query(copy.from(
@@ -270,11 +304,6 @@ export async function carregarBase(origem: Origem, periodo: string, dataRef: str
     // fora do ar junto. Ja aconteceu em producao.
     let erroCopy: Error | null = null;
     destino.on("error", (e: Error) => { erroCopy = e; });
-
-    // Garante o timeout correto desta conexao, independente de quem a
-    // usou antes: uma carga de 1,4 GB nao cabe em limite de minutos.
-    await cli.query("SET statement_timeout = 0");
-    await cli.query("SET lock_timeout = '5min'");
 
     const zip = await unzipper.Open.file(zipLocal);
     for (const e of zip.files) {

@@ -11,6 +11,11 @@ import rotasPecas from "./routes/pecas.js";
 import rotasAuth from "./routes/auth.js";
 import rotasFontes from "./routes/fontes.js";
 import rotasSocios from "./routes/socios.js";
+import rotasPesquisa, { aquecerPainel } from "./routes/pesquisa.js";
+import rotasLeads from "./routes/leads.js";
+import rotasQuadros from "./routes/quadros.js";
+import rotasNotas from "./routes/notas.js";
+import { preencherViewsVazias } from "./db/views-boot.js";
 import { iniciarAgendador } from "./etl/agendador.js";
 
 declare module "fastify" {
@@ -80,7 +85,19 @@ await app.register(rotasSocios);
 await app.register(rotasMapa);
 await app.register(rotasTeses);
 await app.register(rotasPecas);
+await app.register(rotasPesquisa);
+await app.register(rotasLeads);
+await app.register(rotasQuadros);
+await app.register(rotasNotas);
 
 // Agendador DEPOIS do listen: carga pesada nao pode atrasar o healthcheck.
 await app.listen({ port: env.PORT, host: "0.0.0.0" });
-iniciarAgendador();
+// Views que a migracao cria vazias (ver db/views-boot.ts). Em segundo
+// plano: o servidor ja esta atendendo enquanto isso roda.
+// O agendador so liga DEPOIS: carga trimestral (DELETE + INSERT de milhoes
+// de linhas) competindo com a correcao de dados e o preenchimento das views
+// faria um dos dois estourar o lock_timeout.
+const tarefasDeBoot = migracao.ok
+  ? preencherViewsVazias().then(aquecerPainel).catch(() => {})
+  : Promise.resolve();
+void tarefasDeBoot.finally(iniciarAgendador);
