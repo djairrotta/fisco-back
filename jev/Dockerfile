@@ -16,7 +16,6 @@ ENV PORT=8000 \
     BH_TELEMETRY=off \
     ANONYMIZED_TELEMETRY=false \
     BH_UPDATE_CHECK=off \
-    TYPESAFE_MODEL=jev-latest \
     TEXT_MODEL_BASE_URL=https://openrouter.ai/api/v1 \
     TEXT_MODEL=inception/mercury-2.5 \
     TEXT_MODEL_REASONING=none

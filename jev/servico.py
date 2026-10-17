@@ -1,5 +1,5 @@
 """
-Pesquisa de empresa na internet com o Jev (Browser Use x TypeSafe).
+Pesquisa de empresa na internet com o Jev (Browser Use), decidido por modelo do OpenRouter.
 
 Servico separado do backend: precisa de um Chromium rodando, e um
 navegador nao cabe no container da API. O backend chama:
@@ -241,8 +241,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {
             "ok": navegador == "ok",
             "navegador": navegador,
-            "typesafe": bool(os.environ.get("TYPESAFE_API_KEY")),
-            "modelo_texto": bool(os.environ.get("TEXT_MODEL_API_KEY")),
+            "modelo": bool(os.environ.get("TEXT_MODEL_API_KEY")),
             "ocupado": TRAVA.locked(),
         })
 
@@ -251,8 +250,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"erro": "rota"})
         if not CHAVE or self.headers.get("x-chave") != CHAVE:
             return self._json(401, {"erro": "chave inválida"})
-        if not os.environ.get("TYPESAFE_API_KEY"):
-            return self._json(412, {"erro": "Falta TYPESAFE_API_KEY no serviço de pesquisa (fiscojev)."})
+        if not os.environ.get("TEXT_MODEL_API_KEY"):
+            return self._json(412, {"erro": "Falta TEXT_MODEL_API_KEY (OpenRouter) no serviço de pesquisa (fiscojev)."})
         try:
             e = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
         except ValueError:

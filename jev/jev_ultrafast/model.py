@@ -1,7 +1,11 @@
-"""TypeSafe makes choices; an optional small OpenAI-compatible model writes field values."""
+"""Escolhas e valores de campo por um modelo OpenAI-compatible (OpenRouter).
+
+ALTERADO no fisco: o Jev original decidia cada passo pela API da TypeSafe.
+Aqui a decisao (operacao + alvo) e uma chamada de chat ao OpenRouter com
+resposta JSON validada contra os indices observados. Nada da TypeSafe.
+"""
 
 import json
-import math
 import os
 import time
 
@@ -25,24 +29,6 @@ def post_json(url, key, body):
             raise RuntimeError(f"Model provider returned HTTP {response.status_code}; no action executed.")
         return response.json()
     raise RuntimeError("Model unavailable")
-
-
-def validate_choice(answer, ids):
-    try:
-        probabilities = answer["probabilities"]
-        numbers = [*probabilities.values(), answer["confidence"]]
-        valid = (
-            answer["choice"] in ids
-            and set(probabilities) == set(ids)
-            and all(type(n) in (int, float) and math.isfinite(n) and 0 <= n <= 1 for n in numbers)
-            and abs(sum(probabilities.values()) - 1) < 0.02
-            and probabilities[answer["choice"]] >= max(probabilities.values()) - 1e-6
-        )
-    except (KeyError, TypeError, ValueError):
-        valid = False
-    if not valid:
-        raise ValueError("Invalid TypeSafe response; no action executed.")
-    return answer
 
 
 def action_space(actions):
@@ -78,6 +64,15 @@ def action_space(actions):
     return elements, targets, controls
 
 
+def _modelo():
+    base = os.environ.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    key = os.environ.get("TEXT_MODEL_API_KEY")
+    if not key:
+        raise ValueError("Falta TEXT_MODEL_API_KEY (OpenRouter); nenhuma acao executada.")
+    reasoning = {"reasoning": {"enabled": False}} if os.environ.get("TEXT_MODEL_REASONING") == "none" else {}
+    return base, key, reasoning
+
+
 def choose(state, goal, history):
     elements, targets, controls = action_space(state["actions"])
     labels = {
@@ -88,63 +83,67 @@ def choose(state, goal, history):
     operations = {key: labels[key] for key in targets}
     operations.update({key: value["label"] for key, value in controls.items()})
     operations.update(DONE="Every requirement is visibly satisfied.", BLOCKED="No supported operation can progress.")
-    questions = {
-        "operation": {"type": "choice", "criteria": operations, "instructions": {"goal": goal, "rules": NEXT_ACTION}}
-    }
-    for operation, candidates in targets.items():
-        questions[operation.lower() + "_target"] = {
-            "type": "choice",
-            "criteria": {
-                index: {
-                    "element": f"[{index}] {a['label']}",
-                    "current_value": a.get("current_value", a.get("value", "")),
-                    **{k: a[k] for k in ("role", "checked", "selected", "expanded") if k in a},
-                }
-                for index, a in candidates.items()
-            },
-            "instructions": {"goal": goal, "operation": operation, "rules": [NEXT_ACTION, TARGET]},
-        }
-    body = {
-        "model": os.environ.get("TYPESAFE_MODEL", "jev-latest"),
-        "state": {
-            "page": {k: state[k] for k in ("url", "title", "text")},
-            "elements": elements,
-            "recent_actions": [
-                {k: h.get(k) for k in ("action", "kind", "text", "page_changed")} for h in history[-10:]
-            ],
+    body_state = {
+        "goal": goal,
+        "page": {"url": state["url"], "title": state["title"], "text": state["text"][:5000]},
+        "operations": operations,
+        "targets": {
+            op: {i: a["label"][:160] for i, a in cands.items()} for op, cands in targets.items()
         },
-        "questions": questions,
+        "recent_actions": [
+            {k: h.get(k) for k in ("action", "kind", "url", "page_changed")} for h in history[-10:]
+        ],
     }
+    system = (
+        NEXT_ACTION + "\n\n" + TARGET + "\n\n"
+        'Answer ONLY a JSON object: {"operation": one key of operations, '
+        '"target": the target index (string) when the operation has targets, else null, '
+        '"reason": short}. Never pick an index that is not listed.'
+    )
+    base, key, reasoning = _modelo()
+    model = os.environ.get("NAV_MODEL") or os.environ.get("TEXT_MODEL", "inception/mercury-2.5")
     started = time.perf_counter()
-    result = post_json("https://api.typesafe.ai/v1/systemone", os.environ["TYPESAFE_API_KEY"], body)
-    operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
-    operation = operation_answer["choice"]
-    target = None
-    target_answer = None
-    probabilities = {}
-    if operation in targets:
-        # Unused target heads cannot cause an action. Validate the head selected by the operation.
-        target_answer = validate_choice(result["answers"].get(operation.lower() + "_target", {}), targets[operation])
-        target = target_answer["choice"]
-        choice = targets[operation][target]["id"]
-        probabilities = {a["id"]: target_answer["probabilities"][index] for index, a in targets[operation].items()}
-    else:
-        choice = controls[operation]["id"] if operation in controls else operation
-        probabilities[choice] = operation_answer["probabilities"][operation]
+    result = post_json(base + "/chat/completions", key, {
+        "model": model,
+        "max_tokens": 300,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        **reasoning,
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": json.dumps(body_state, ensure_ascii=False)}],
+    })
+    try:
+        bruto = result["choices"][0]["message"]["content"].strip()
+        if bruto.startswith("```"):
+            bruto = bruto.strip("`").removeprefix("json").strip()
+        answer = json.loads(bruto)
+        operation = str(answer["operation"]).upper()
+        if operation not in operations:
+            raise ValueError()
+        target = None
+        if operation in targets:
+            target = str(answer.get("target"))
+            if target not in targets[operation]:
+                raise ValueError()
+            choice = targets[operation][target]["id"]
+        else:
+            choice = controls[operation]["id"] if operation in controls else operation
+    except (KeyError, TypeError, ValueError, IndexError):
+        raise ValueError("Resposta invalida do modelo de navegacao; nenhuma acao executada.") from None
     return {
         "choice": choice,
         "operation": operation,
         "target": target,
-        "confidence": operation_answer["confidence"],
-        "probabilities": probabilities,
-        "operation_probabilities": operation_answer["probabilities"],
-        "target_probabilities": target_answer["probabilities"] if target_answer else {},
-        "target_confidence": target_answer["confidence"] if target_answer else None,
-        "raw_answers": result["answers"],
-        "model": result["model"],
+        "confidence": 1.0,
+        "probabilities": {choice: 1.0},
+        "operation_probabilities": {},
+        "target_probabilities": {},
+        "target_confidence": None,
+        "raw_answers": answer,
+        "model": model,
         "usage": result.get("usage", {}),
         "latency_ms": round((time.perf_counter() - started) * 1000),
-        "request": body,
+        "request": body_state,
     }
 
 
@@ -158,14 +157,8 @@ def field_context(goal, action, page, history):
 
 
 def field_text(context):
-    key = os.environ.get("TEXT_MODEL_API_KEY")
-    if not key:
-        raise ValueError("TYPE_TEXT needs TEXT_MODEL_API_KEY; no text is hardcoded or guessed by the executor.")
-    base = os.environ.get("TEXT_MODEL_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
-    model = os.environ.get("TEXT_MODEL", "deepseek-chat")
-    reasoning = {"thinking": {"type": "disabled"}} if "api.deepseek.com/" in base else {"reasoning": {"effort": "low"}}
-    if os.environ.get("TEXT_MODEL_REASONING") == "none":
-        reasoning = {"reasoning": {"enabled": False}}
+    base, key, reasoning = _modelo()
+    model = os.environ.get("TEXT_MODEL", "inception/mercury-2.5")
     started = time.perf_counter()
     result = post_json(
         base + "/chat/completions",

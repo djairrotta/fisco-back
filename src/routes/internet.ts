@@ -32,8 +32,8 @@ export default async function rotasInternet(app: FastifyInstance) {
     try {
       const r = await fetch(URL() + "/health", { signal: AbortSignal.timeout(4000) });
       const h = await r.json();
-      return { configurado: !!(h.typesafe && h.navegador === "ok"), ...h,
-               motivo: !h.typesafe ? "Falta TYPESAFE_API_KEY no serviço fiscojev." : h.navegador !== "ok" ? "Navegador do serviço fora do ar." : null };
+      return { configurado: !!(h.modelo && h.navegador === "ok"), ...h,
+               motivo: !h.modelo ? "Falta TEXT_MODEL_API_KEY (OpenRouter) no serviço fiscojev." : h.navegador !== "ok" ? "Navegador do serviço fora do ar." : null };
     } catch {
       return { configurado: false, motivo: "Serviço de pesquisa (fiscojev) fora do ar." };
     }
