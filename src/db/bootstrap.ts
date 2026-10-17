@@ -15,6 +15,7 @@ import { pool } from "./pool.js";
  */
 export async function migrarNoBoot(): Promise<{ ok: boolean; erro?: string }> {
   const cli = await pool.connect();
+  let atual = "";
   try {
     // lock_timeout E OBRIGATORIO. Com o agendador no mesmo processo, uma
     // carga da PGFN em andamento segura lock na divida_inscricao; sem
@@ -30,12 +31,25 @@ export async function migrarNoBoot(): Promise<{ ok: boolean; erro?: string }> {
     const raiz = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "sql");
     const arquivos = (await readdir(raiz)).filter((f) => f.endsWith(".sql")).sort();
     for (const f of arquivos) {
+      atual = f;
       await cli.query(await readFile(join(raiz, f), "utf8"));
     }
     console.log(`[boot] ${arquivos.length} migracoes aplicadas`);
     return { ok: true };
   } catch (e) {
-    const erro = e instanceof Error ? e.message : String(e);
+    let erro = `${atual}: ${e instanceof Error ? e.message : String(e)}`;
+    // Quem estava segurando o banco. Sem log centralizado, isto em /health e
+    // a unica forma de ver o bloqueio. Literais trocados por ? (sem dado).
+    if (/lock timeout/i.test(erro)) {
+      const b = await pool.query(
+        `SELECT pid, state, wait_event_type, round(extract(epoch FROM now() - xact_start)) AS seg,
+                left(regexp_replace(query, $$'[^']*'$$, '?', 'g'), 90) AS sql
+           FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid()
+            AND state <> 'idle' AND xact_start IS NOT NULL
+          ORDER BY xact_start LIMIT 4`).catch(() => ({ rows: [] as any[] }));
+      if (b.rows.length) erro += " | ativos: " + b.rows.map((r: any) => `${r.pid} ${r.state} ${r.seg}s ${r.wait_event_type ?? ""} ${r.sql}`).join(" ; ");
+    }
     console.error("[boot] migracao falhou:", erro);
     return { ok: false, erro };
   } finally {
