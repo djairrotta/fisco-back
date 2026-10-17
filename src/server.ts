@@ -15,6 +15,7 @@ import rotasPesquisa, { aquecerPainel } from "./routes/pesquisa.js";
 import rotasLeads from "./routes/leads.js";
 import rotasQuadros from "./routes/quadros.js";
 import rotasNotas from "./routes/notas.js";
+import rotasInternet from "./routes/internet.js";
 import { preencherViewsVazias, recalcularSeDadoNovo } from "./db/views-boot.js";
 import { garantirTransacaoSp } from "./etl/sp-transacao.js";
 import { iniciarAgendador } from "./etl/agendador.js";
@@ -90,6 +91,7 @@ await app.register(rotasPesquisa);
 await app.register(rotasLeads);
 await app.register(rotasQuadros);
 await app.register(rotasNotas);
+await app.register(rotasInternet);
 
 // Agendador DEPOIS do listen: carga pesada nao pode atrasar o healthcheck.
 await app.listen({ port: env.PORT, host: "0.0.0.0" });
