@@ -34,7 +34,7 @@ app.decorate("authenticate", async (req: any, reply: any) => {
   try { await req.jwtVerify(); } catch { reply.code(401).send({ erro: "nao autenticado" }); }
 });
 
-const migracao = await migrarNoBoot();
+let migracao = await migrarNoBoot();
 if (migracao.ok) await carregarTeses();
 
 // /health consulta o banco de verdade. Um health que responde 200 sem
@@ -100,7 +100,22 @@ await app.listen({ port: env.PORT, host: "0.0.0.0" });
 // O agendador so liga DEPOIS: carga trimestral (DELETE + INSERT de milhoes
 // de linhas) competindo com a correcao de dados e o preenchimento das views
 // faria um dos dois estourar o lock_timeout.
-const tarefasDeBoot = migracao.ok
-  ? preencherViewsVazias().then(recalcularSeDadoNovo).then(garantirTransacaoSp).then(aquecerPainel).catch(() => {})
-  : Promise.resolve();
+//
+// Migracao pendente (lock_timeout: havia carga da PGFN segurando a tabela,
+// as vezes uma transacao orfa do container anterior, que o Postgres so
+// encerra quando o comando dela termina) e TENTADA DE NOVO a cada 2 min.
+// Sem isso o banco ficava com schema velho ate o proximo deploy, e o
+// codigo novo quebrava (coluna/tabela inexistente). O agendador so liga
+// depois que a migracao passa: se ligasse antes, a carga dele seguraria a
+// tabela e a migracao nunca passaria.
+async function migracaoAplicada() {
+  while (!migracao.ok) {
+    await new Promise((r) => setTimeout(r, 120_000));
+    migracao = await migrarNoBoot();
+    if (migracao.ok) await carregarTeses().catch(() => {});
+  }
+}
+const tarefasDeBoot = migracaoAplicada()
+  .then(() => preencherViewsVazias().then(recalcularSeDadoNovo).then(garantirTransacaoSp).then(aquecerPainel))
+  .catch(() => {});
 void tarefasDeBoot.finally(iniciarAgendador);
