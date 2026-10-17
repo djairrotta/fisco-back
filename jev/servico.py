@@ -242,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
             "ok": navegador == "ok",
             "navegador": navegador,
             "modelo": bool(os.environ.get("TEXT_MODEL_API_KEY")),
+            # compat: o backend publicado antes de 7bd5147 le "typesafe".
+            "typesafe": bool(os.environ.get("TEXT_MODEL_API_KEY")),
             "ocupado": TRAVA.locked(),
         })
 
