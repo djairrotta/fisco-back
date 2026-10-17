@@ -42,6 +42,10 @@ export async function atualizarViews() {
     }
   }
 
+  // Marca o recalculo, mesmo parcial: o boot so refaz quando houver carga
+  // terminada DEPOIS desta marca.
+  await pool.query(`UPDATE fisco.views_estado SET atualizado_em = now() WHERE id = 1`).catch(() => {});
+
   if (ausentes.length || falharam.length) {
     console.warn(`[views] resumo: ${ausentes.length} ausentes, ${falharam.length} com erro`);
   }

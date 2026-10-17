@@ -10,6 +10,23 @@
  * o primeiro segundo.
  */
 import { pool } from "./pool.js";
+import { atualizarViews } from "../etl/refresh-views.js";
+
+/**
+ * Carga terminou depois do ultimo recalculo? Entao recalcula agora. Cobre
+ * o container que reiniciou entre o fim de uma carga e o recalculo.
+ */
+export async function recalcularSeDadoNovo(): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT (SELECT max(terminou_em) FROM fisco.carga_etl WHERE erro IS NULL)
+              > coalesce((SELECT atualizado_em FROM fisco.views_estado WHERE id = 1), '-infinity')
+            AS novo`).catch(() => ({ rows: [] as any[] }));
+  if (!rows[0]?.novo) return false;
+  console.log("[views] ha carga mais nova que o ultimo recalculo; recalculando");
+  await atualizarViews();
+  prontas.clear();
+  return true;
+}
 
 const prontas = new Set<string>();
 let preenchendo: Promise<void> | null = null;

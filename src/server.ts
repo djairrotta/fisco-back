@@ -15,7 +15,8 @@ import rotasPesquisa, { aquecerPainel } from "./routes/pesquisa.js";
 import rotasLeads from "./routes/leads.js";
 import rotasQuadros from "./routes/quadros.js";
 import rotasNotas from "./routes/notas.js";
-import { preencherViewsVazias } from "./db/views-boot.js";
+import { preencherViewsVazias, recalcularSeDadoNovo } from "./db/views-boot.js";
+import { garantirTransacaoSp } from "./etl/sp-transacao.js";
 import { iniciarAgendador } from "./etl/agendador.js";
 
 declare module "fastify" {
@@ -98,6 +99,6 @@ await app.listen({ port: env.PORT, host: "0.0.0.0" });
 // de linhas) competindo com a correcao de dados e o preenchimento das views
 // faria um dos dois estourar o lock_timeout.
 const tarefasDeBoot = migracao.ok
-  ? preencherViewsVazias().then(aquecerPainel).catch(() => {})
+  ? preencherViewsVazias().then(recalcularSeDadoNovo).then(garantirTransacaoSp).then(aquecerPainel).catch(() => {})
   : Promise.resolve();
 void tarefasDeBoot.finally(iniciarAgendador);

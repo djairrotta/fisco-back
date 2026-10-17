@@ -20,6 +20,7 @@ interface Filtros {
   ativa?: string; desde?: string; ate?: string; ordem?: string; pagina?: string; limite?: string;
   cadastro?: string; regime?: string | string[]; porte?: string | string[];
   socios_min?: string; socios_max?: string; capital_min?: string; capital_max?: string;
+  estadual?: string;
 }
 
 const ORDENS: Record<string, string> = {
@@ -66,6 +67,9 @@ export function montarFiltro(f: Filtros) {
   if (f.socios_max && Number(f.socios_max) > 0) add("qtd_socios <= ?", Number(f.socios_max));
   if (f.capital_min && Number(f.capital_min) > 0) add("capital_social >= ?", Number(f.capital_min));
   if (f.capital_max && Number(f.capital_max) > 0) add("capital_social <= ?", Number(f.capital_max));
+  // Divida estadual de SP publicada em lote (base de transacao da PGE-SP).
+  if (f.estadual === "sp") onde.push("EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz)");
+  if (f.estadual === "sp_rompido") onde.push("EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz AND t.status ILIKE 'Rompido%')");
   if (f.valor_min && Number(f.valor_min) > 0) add("valor_total >= ?", Number(f.valor_min));
   if (f.valor_max && Number(f.valor_max) > 0) add("valor_total <= ?", Number(f.valor_max));
   const tributos = lista(f.tributo);
@@ -119,6 +123,7 @@ export default async function rotasPesquisa(app: FastifyInstance) {
 
     const [linhas, [cont]] = await Promise.all([
       q(`SELECT ${COLUNAS_LISTA},
+                EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz) AS estadual_sp,
                 EXISTS (SELECT 1 FROM lead_juridico l
                          WHERE l.tenant_id = $${params.length + 1} AND l.removido_em IS NULL
                            AND left(l.cnpj, 8) = d.cnpj_raiz) AS e_lead
@@ -129,7 +134,7 @@ export default async function rotasPesquisa(app: FastifyInstance) {
       // e ninguem precisa saber se sao 3.981.442 ou "mais de 100 mil".
       q<{ n: string; soma: string }>(
         `SELECT count(*) AS n, sum(valor_total) AS soma FROM (
-           SELECT valor_total FROM mv_devedor ${where} LIMIT ${LIMITE_CONTAGEM + 1}) x`, params),
+           SELECT valor_total FROM mv_devedor d ${where} LIMIT ${LIMITE_CONTAGEM + 1}) x`, params),
     ]);
     const n = Number(cont?.n ?? 0);
     return {
@@ -150,7 +155,7 @@ export default async function rotasPesquisa(app: FastifyInstance) {
       `SELECT cnpj, nome, nome_fantasia, uf, municipio, valor_total, valor_ajuizado,
               qtd_inscricoes, tributo_principal, inscricao_mais_antiga, telefone, email,
               cnae_principal, data_referencia, regime, porte, qtd_socios, capital_social
-         FROM mv_devedor ${where} ORDER BY ${ordem} LIMIT 5000`, params);
+         FROM mv_devedor d ${where} ORDER BY ${ordem} LIMIT 5000`, params);
     const cab = ["CNPJ", "Razão social", "Nome fantasia", "UF", "Município", "Dívida total",
       "Dívida ajuizada", "Inscrições", "Tributo principal", "Inscrição mais antiga",
       "Telefone", "E-mail", "CNAE", "Posição da base", "Regime", "Porte", "Sócios", "Capital social"];
@@ -244,9 +249,13 @@ export default async function rotasPesquisa(app: FastifyInstance) {
     if (!devedor && !inscricoes.length && !cadastro) return naoEncontrado(reply, "empresa");
 
     const grupo = await grupoEconomico(raiz).catch(() => []);
+    const estadualSp = await q(
+      `SELECT edital, status, tipo_debito, qtd_debitos, qtd_parcelas, valor_sem_beneficio,
+              valor_com_beneficio, data_solicitacao, posicao
+         FROM estadual_transacao_sp WHERE cnpj_raiz = $1 ORDER BY data_solicitacao DESC NULLS LAST`, [raiz]).catch(() => []);
     return {
       raiz, cnpj, devedor, inscricoes, cadastro, socios_devedores: sociosDevedores,
-      grupo_economico: grupo, lead: lead[0] ?? null, notas,
+      grupo_economico: grupo, lead: lead[0] ?? null, notas, estadual_sp: estadualSp,
       avisos: {
         socios: "Vínculo entre sócio e dívida de pessoa física é inferido por fragmento de CPF "
           + "mais nome (PGFN e Receita mascaram o CPF). É indício, não identificação.",
@@ -323,7 +332,7 @@ async function montarPainel(uf: string) {
             max(data_referencia) AS data_referencia
        FROM mv_devedor ${w}`, p);
 
-  const [porUf, porTributo, faixas, porAno, topMunicipios, topDevedores, pessoas, porRegime, porPorte] = await Promise.all([
+  const [porUf, porTributo, faixas, porAno, topMunicipios, topDevedores, pessoas, porRegime, porPorte, estadualSp] = await Promise.all([
     q(`SELECT uf, count(*) AS empresas, sum(valor_total) AS valor_total,
               sum(valor_ajuizado) AS valor_ajuizado
          FROM mv_devedor GROUP BY uf ORDER BY valor_total DESC`),
@@ -360,12 +369,18 @@ async function montarPainel(uf: string) {
          FROM mv_devedor ${w ? w + " AND" : "WHERE"} regime IS NOT NULL GROUP BY regime ORDER BY 2 DESC`, p),
     q(`SELECT porte, count(*) AS empresas, sum(valor_total) AS valor_total
          FROM mv_devedor ${w ? w + " AND" : "WHERE"} porte IN (1,3,5) GROUP BY porte ORDER BY porte`, p),
+    // Estadual de SP so existe em SP: no filtro por outra UF, nada.
+    uf && uf !== "SP" ? Promise.resolve([null]) : q(
+      `SELECT count(DISTINCT cnpj_raiz) AS empresas, coalesce(sum(valor_sem_beneficio), 0) AS valor_total,
+              count(DISTINCT cnpj_raiz) FILTER (WHERE status ILIKE 'Rompido%') AS rompidos,
+              max(posicao) AS posicao
+         FROM estadual_transacao_sp`).catch(() => [null]),
   ]);
 
   return {
     uf: uf || null, totais, por_uf: porUf, por_tributo: porTributo, faixas,
     por_ano: porAno, top_municipios: topMunicipios, top_devedores: topDevedores,
-    pessoas_fisicas: pessoas[0], por_regime: porRegime, por_porte: porPorte,
+    pessoas_fisicas: pessoas[0], por_regime: porRegime, por_porte: porPorte, estadual_sp: estadualSp[0],
     gerado_em: new Date().toISOString(),
   };
 }

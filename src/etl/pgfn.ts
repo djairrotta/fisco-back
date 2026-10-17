@@ -231,6 +231,7 @@ const COLUNAS = `documento, documento_completo, cnpj_raiz, uf, origem, numero_in
 async function enviarCsv(entrada: NodeJS.ReadableStream, destino: Writable,
                          origem: Origem, dataRef: string, c: Contagem) {
   const rl = createInterface({ input: entrada as Readable, crlfDelay: Infinity });
+  const lote: string[] = [];
   let mapa: Mapa | null = null;
   for await (const bruta of rl) {
     if (!mapa) { mapa = lerCabecalho(bruta); continue; }   // cabecalho do arquivo
@@ -240,9 +241,22 @@ async function enviarCsv(entrada: NodeJS.ReadableStream, destino: Writable,
       (m) => { c.motivos[m] = (c.motivos[m] ?? 0) + 1; });
     if (!linha) { c.rejeitadas++; continue; }
     c.aceitas++;
-    if (!destino.write(linha)) {
-      await new Promise<void>((r) => destino.once("drain", () => r()));
-    }
+    // Escreve em blocos de ~5 mil linhas, nao linha a linha. Uma escrita
+    // por linha virava uma mensagem por linha no socket do Postgres: a
+    // carga andava a ~6 mil linhas/s com o processo a 100% de CPU, e a
+    // base nao previdenciaria (45 milhoes de linhas) levava horas.
+    lote.push(linha);
+    if (lote.length >= 5000) await despejar(destino, lote);
+  }
+  await despejar(destino, lote);
+}
+
+async function despejar(destino: Writable, buf: string[]) {
+  if (!buf.length) return;
+  const bloco = buf.join("");
+  buf.length = 0;
+  if (!destino.write(bloco)) {
+    await new Promise<void>((r) => destino.once("drain", () => r()));
   }
 }
 
