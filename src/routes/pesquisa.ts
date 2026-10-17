@@ -13,6 +13,7 @@ import {
   cnpjValido, limparCnpj, lista, memo, naoEncontrado, numero, raizValida, sessao,
 } from "../lib/http.js";
 import { viewPronta } from "../db/views-boot.js";
+import { listarProgramas, programasDaEmpresa, situacaoPrograma } from "../services/programas.js";
 
 interface Filtros {
   q?: string; uf?: string | string[]; municipio?: string; valor_min?: string; valor_max?: string;
@@ -20,7 +21,7 @@ interface Filtros {
   ativa?: string; desde?: string; ate?: string; ordem?: string; pagina?: string; limite?: string;
   cadastro?: string; regime?: string | string[]; porte?: string | string[];
   socios_min?: string; socios_max?: string; capital_min?: string; capital_max?: string;
-  estadual?: string;
+  estadual?: string; programa?: string; acordo?: string;
 }
 
 const ORDENS: Record<string, string> = {
@@ -67,6 +68,17 @@ export function montarFiltro(f: Filtros) {
   if (f.socios_max && Number(f.socios_max) > 0) add("qtd_socios <= ?", Number(f.socios_max));
   if (f.capital_min && Number(f.capital_min) > 0) add("capital_social >= ?", Number(f.capital_min));
   if (f.capital_max && Number(f.capital_max) > 0) add("capital_social <= ?", Number(f.capital_max));
+  // Situacao dos acordos na PGFN.
+  if (f.acordo === "rescindido") onde.push("qtd_rescindidas > 0");
+  if (f.acordo === "sem_acordo") onde.push("qtd_negociadas = 0");
+  if (f.acordo === "negociado") onde.push("qtd_negociadas > 0");
+  // Triagem por programa de regularizacao (aproximada; a ficha detalha).
+  if (f.programa === "pequeno_valor") onde.push("valor_total <= 97260 AND (porte IS NULL OR porte IN (1,3) OR regime = 'mei')");
+  if (f.programa === "dificil") onde.push(`(inscricao_mais_antiga < now() - interval '15 years' OR situacao IN (3,4,8)
+    OR busca ~ '(FALID|LIQUIDACAO)')`);
+  if (f.programa === "fgts") onde.push("'PGFN_FGTS' = ANY(origens)");
+  if (f.programa === "individual") onde.push("valor_total > 1000000");
+  if (f.programa === "recuperacao") onde.push("busca ~ 'RECUPERACAO JUDICIAL'");
   // Divida estadual de SP publicada em lote (base de transacao da PGE-SP).
   if (f.estadual === "sp") onde.push("EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz)");
   if (f.estadual === "sp_rompido") onde.push("EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz AND t.status ILIKE 'Rompido%')");
@@ -91,7 +103,7 @@ export function montarFiltro(f: Filtros) {
 const COLUNAS_LISTA = `cnpj_raiz, cnpj, nome, nome_fantasia, uf, municipio, municipio_ibge,
   qtd_inscricoes, valor_total, valor_ajuizado, tem_ajuizada, tributo_principal, tributos,
   inscricao_mais_antiga, data_referencia, telefone, email, cnae_principal, situacao, tem_cadastro,
-  porte, regime, qtd_socios, capital_social`;
+  porte, regime, qtd_socios, capital_social, qtd_rescindidas, qtd_negociadas`;
 
 const LIMITE_CONTAGEM = 100_000;
 
@@ -249,13 +261,21 @@ export default async function rotasPesquisa(app: FastifyInstance) {
     if (!devedor && !inscricoes.length && !cadastro) return naoEncontrado(reply, "empresa");
 
     const grupo = await grupoEconomico(raiz).catch(() => []);
-    const estadualSp = await q(
+    const estadualSpQ = q(
       `SELECT edital, status, tipo_debito, qtd_debitos, qtd_parcelas, valor_sem_beneficio,
               valor_com_beneficio, data_solicitacao, posicao
          FROM estadual_transacao_sp WHERE cnpj_raiz = $1 ORDER BY data_solicitacao DESC NULLS LAST`, [raiz]).catch(() => []);
+    const estadualSp = await estadualSpQ;
+    const programas = await programasDaEmpresa({
+      nome: devedor?.nome ?? cadastro?.razao_social ?? null,
+      porte: devedor?.porte ?? null, regime: devedor?.regime ?? null, situacao: devedor?.situacao ?? null,
+      uf: devedor?.uf ?? cadastro?.endereco?.uf ?? null,
+      inscricoes: inscricoes as any[],
+      estadual_sp: estadualSp.length > 0,
+    }).catch(() => []);
     return {
       raiz, cnpj, devedor, inscricoes, cadastro, socios_devedores: sociosDevedores,
-      grupo_economico: grupo, lead: lead[0] ?? null, notas, estadual_sp: estadualSp,
+      grupo_economico: grupo, lead: lead[0] ?? null, notas, estadual_sp: estadualSp, programas,
       avisos: {
         socios: "Vínculo entre sócio e dívida de pessoa física é inferido por fragmento de CPF "
           + "mais nome (PGFN e Receita mascaram o CPF). É indício, não identificação.",
@@ -272,6 +292,14 @@ export default async function rotasPesquisa(app: FastifyInstance) {
     const c = await consultarCadastro(cnpj, true);
     if (!c) return reply.code(502).send({ erro: "Nenhuma fonte de cadastro respondeu agora. Tente em instantes." });
     return c;
+  });
+
+  // ------------------------------------------------------------------
+  // Programas de regularizacao (transacao e parcelamento)
+  // ------------------------------------------------------------------
+  app.get("/api/programas", auth, async () => {
+    const ps = await listarProgramas();
+    return ps.map((p) => ({ ...p, ...situacaoPrograma(p) }));
   });
 
   // ------------------------------------------------------------------
@@ -329,6 +357,8 @@ async function montarPainel(uf: string) {
             coalesce(sum(qtd_inscricoes),0) AS inscricoes,
             count(*) FILTER (WHERE tem_cadastro) AS com_cadastro,
             count(*) FILTER (WHERE telefone IS NOT NULL OR email IS NOT NULL) AS com_contato,
+            count(*) FILTER (WHERE qtd_rescindidas > 0) AS com_rescisao,
+            count(*) FILTER (WHERE qtd_negociadas = 0) AS sem_acordo,
             max(data_referencia) AS data_referencia
        FROM mv_devedor ${w}`, p);
 
