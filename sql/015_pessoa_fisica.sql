@@ -31,19 +31,33 @@ DO $$ BEGIN
     ALTER TABLE divida_inscricao RENAME COLUMN cnpj TO documento;
   END IF;
 END $$;
-ALTER TABLE divida_inscricao ALTER COLUMN cnpj_raiz DROP NOT NULL;
-ALTER TABLE divida_inscricao ALTER COLUMN tipo_pessoa SET DEFAULT 'PJ';
-UPDATE divida_inscricao SET tipo_pessoa = 'PJ' WHERE tipo_pessoa IS NULL;
+-- GUARDA (026): isto rodava a CADA BOOT. O UPDATE varre a tabela inteira
+-- (dezenas de milhoes de linhas) segurando lock exclusivo na
+-- divida_inscricao; com a tabela inchada ele passou dos 180 s do
+-- statement_timeout, a migracao falhava, tentava de novo 2 min depois e
+-- segurava o lock de novo -- painel fora do ar em laco. So roda enquanto a
+-- constraint ck_documento nao existe (ela e criada aqui pela primeira vez).
+DO $pf$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_documento'
+              AND conrelid = 'fisco.divida_inscricao'::regclass) THEN
+    RETURN;
+  END IF;
+  ALTER TABLE divida_inscricao ALTER COLUMN cnpj_raiz DROP NOT NULL;
+  ALTER TABLE divida_inscricao ALTER COLUMN tipo_pessoa SET DEFAULT 'PJ';
+  UPDATE divida_inscricao SET tipo_pessoa = 'PJ' WHERE tipo_pessoa IS NULL;
+  ALTER TABLE divida_inscricao ADD CONSTRAINT ck_documento CHECK (
+    (tipo_pessoa = 'PJ' AND length(documento) = 14 AND cnpj_raiz IS NOT NULL) OR
+    (tipo_pessoa = 'PF' AND length(documento) = 11 AND cnpj_raiz IS NULL)
+  ) NOT VALID;
+END $pf$;
 
--- Coerência: PJ tem 14 dígitos e raiz; PF tem 11 e não tem raiz.
-ALTER TABLE divida_inscricao DROP CONSTRAINT IF EXISTS ck_documento;
-ALTER TABLE divida_inscricao ADD CONSTRAINT ck_documento CHECK (
-  (tipo_pessoa = 'PJ' AND length(documento) = 14 AND cnpj_raiz IS NOT NULL) OR
-  (tipo_pessoa = 'PF' AND length(documento) = 11 AND cnpj_raiz IS NULL)
-) NOT VALID;
-
-CREATE INDEX IF NOT EXISTS ix_divida_documento
-  ON divida_inscricao (documento) WHERE tipo_devedor = 1;
+DO $ix$
+BEGIN
+  IF to_regclass('fisco.ix_divida_documento') IS NULL THEN
+    CREATE INDEX ix_divida_documento ON divida_inscricao (documento) WHERE tipo_devedor = 1;
+  END IF;
+END $ix$;
 
 -- --- Agregados de EMPRESA: agora explicitamente só PJ ----------------
 -- mv_municipio depende de mv_divida_empresa, entao o DROP ... CASCADE

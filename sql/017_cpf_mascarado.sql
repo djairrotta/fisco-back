@@ -25,16 +25,25 @@
 -- =====================================================================
 SET search_path TO fisco, public;
 
-ALTER TABLE divida_inscricao DROP CONSTRAINT IF EXISTS ck_documento;
-ALTER TABLE divida_inscricao ADD CONSTRAINT ck_documento CHECK (
-  (tipo_pessoa = 'PJ' AND documento ~ '^[0-9]{14}$' AND cnpj_raiz IS NOT NULL) OR
-  (tipo_pessoa = 'PF' AND cnpj_raiz IS NULL)
-) NOT VALID;
-
-ALTER TABLE divida_inscricao
-  ADD COLUMN IF NOT EXISTS documento_completo boolean NOT NULL DEFAULT true;
-COMMENT ON COLUMN divida_inscricao.documento_completo IS
-  'false quando a origem mascarou o documento (sempre o caso de CPF na PGFN)';
+-- GUARDA (026): so na primeira vez (antes rodava a cada boot, com lock
+-- exclusivo na divida_inscricao). A versao final da constraint, que aceita
+-- CNPJ alfanumerico, esta em 027_ck_documento_alfanumerico.sql.
+DO $cpf$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'fisco.divida_inscricao'::regclass
+              AND attname = 'documento_completo' AND NOT attisdropped) THEN
+    RETURN;
+  END IF;
+  ALTER TABLE divida_inscricao DROP CONSTRAINT IF EXISTS ck_documento;
+  ALTER TABLE divida_inscricao ADD CONSTRAINT ck_documento CHECK (
+    (tipo_pessoa = 'PJ' AND documento ~ '^[0-9]{14}$' AND cnpj_raiz IS NOT NULL) OR
+    (tipo_pessoa = 'PF' AND cnpj_raiz IS NULL)
+  ) NOT VALID;
+  ALTER TABLE divida_inscricao
+    ADD COLUMN IF NOT EXISTS documento_completo boolean NOT NULL DEFAULT true;
+  COMMENT ON COLUMN divida_inscricao.documento_completo IS
+    'false quando a origem mascarou o documento (sempre o caso de CPF na PGFN)';
+END $cpf$;
 
 -- A chave de agregação de PF é o melhor disponível, e ainda assim é
 -- aproximada: fragmento + nome + UF. Está documentado como aproximação
