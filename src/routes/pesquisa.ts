@@ -100,7 +100,7 @@ async function preparando(reply: FastifyReply): Promise<boolean> {
   return true;
 }
 
-const painelCache = memo<any>(30 * 60_000);
+const painelCache = memo<any>(10 * 60_000);
 
 export default async function rotasPesquisa(app: FastifyInstance) {
   const auth = { onRequest: [(app as any).authenticate] };
@@ -203,7 +203,9 @@ export default async function rotasPesquisa(app: FastifyInstance) {
     if (await preparando(reply)) return;
     const uf = (req.query.uf || "").toUpperCase();
     const filtroUf = /^[A-Z]{2}$/.test(uf) ? uf : "";
-    return painelCache(`painel:${filtroUf}`, () => montarPainel(filtroUf));
+    // A chave carrega a versao dos dados: quando uma carga termina, o painel
+    // recalcula na hora em vez de mostrar o numero velho por 30 minutos.
+    return painelCache(`painel:${filtroUf}:${await versaoDados()}`, () => montarPainel(filtroUf));
   });
 
   // ------------------------------------------------------------------
@@ -431,7 +433,7 @@ async function grupoEconomico(raiz: string) {
 export async function aquecerPainel() {
   if (!(await viewPronta("mv_devedor"))) return;
   const t = Date.now();
-  await painelCache("painel:", () => montarPainel("")).catch(() => {});
+  await painelCache(`painel::${await versaoDados()}`, () => montarPainel("")).catch(() => {});
   console.log(`[painel] aquecido em ${Math.round((Date.now() - t) / 1000)}s`);
 }
 
@@ -463,4 +465,11 @@ function listaMunicipios(): Promise<Mun[]> {
     }
   })();
   return municipios;
+}
+
+async function versaoDados(): Promise<string> {
+  const [v] = await q<{ v: string | null }>(
+    `SELECT greatest(max(ultima_carga), (SELECT max(terminou_em) FROM carga_etl))::text AS v FROM fonte_dados`)
+    .catch(() => [{ v: null }]);
+  return v?.v ?? "0";
 }

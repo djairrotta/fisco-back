@@ -38,8 +38,9 @@ export interface DividaEstadual {
 export async function consultarDividaEstadual(
   cnpj: string, uf: UfEstadual, forcar = false
 ): Promise<DividaEstadual> {
-  const limpo = (cnpj || "").replace(/\D/g, "");
-  if (limpo.length !== 14) throw new Error("CNPJ inválido");
+  // CNPJ alfanumerico (julho/2026) tem letra: so a pontuacao sai.
+  const limpo = (cnpj || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+  if (!/^[0-9A-Z]{12}\d{2}$/.test(limpo)) throw new Error("CNPJ inválido");
 
   if (!forcar) {
     const [c] = await q<any>(
@@ -100,4 +101,24 @@ export async function consultarDividaEstadual(
   return { uf, tem_debito: tem, valor_total: valor, quantidade: qtd,
            consultado_em: new Date().toISOString(), cache: false,
            ...(erro ? { indisponivel: erro } : {}) };
+}
+
+export const consultaEstadualConfigurada = () => !!env.INFOSIMPLES_TOKEN;
+
+/**
+ * Varias empresas de uma vez (leads, selecao da pesquisa). Duas consultas
+ * em paralelo: a Infosimples cobra por consulta e limita rajada; o cache de
+ * 30 dias evita pagar de novo pelo que ja foi consultado.
+ */
+export async function consultarLoteEstadual(alvos: { cnpj: string; uf: UfEstadual }[]) {
+  const fila = [...alvos];
+  const res: { cnpj: string; uf: UfEstadual; r?: DividaEstadual; erro?: string }[] = [];
+  const trabalhador = async () => {
+    for (let a = fila.shift(); a; a = fila.shift()) {
+      try { res.push({ ...a, r: await consultarDividaEstadual(a.cnpj, a.uf) }); }
+      catch (e) { res.push({ ...a, erro: e instanceof Error ? e.message : String(e) }); }
+    }
+  };
+  await Promise.all([trabalhador(), trabalhador()]);
+  return res;
 }

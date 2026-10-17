@@ -88,7 +88,15 @@ export default async function rotasLeads(app: FastifyInstance) {
     let w = "tenant_id = $1 AND removido_em IS NULL";
     if (req.query.q?.trim()) { p.push(req.query.q.trim()); w += ` AND (busca @@ plainto_tsquery('portuguese', $${p.length}) OR nome ILIKE '%' || $${p.length} || '%' OR cnpj LIKE $${p.length} || '%')`; }
     if (req.query.fase) { p.push(req.query.fase); w += ` AND fase = $${p.length}`; }
-    return q(`SELECT ${CAMPOS_LEAD} FROM lead_juridico WHERE ${w} ORDER BY fase, posicao LIMIT 2000`, p);
+    return q(`SELECT ${CAMPOS_LEAD.split(",").map((c) => "l." + c.trim()).join(", ")},
+                     e.estadual_total, e.estadual_consultado_em
+                FROM lead_juridico l
+                LEFT JOIN LATERAL (
+                  SELECT sum(valor_total) FILTER (WHERE tem_debito) AS estadual_total,
+                         max(consultado_em) AS estadual_consultado_em
+                    FROM divida_estadual d WHERE d.cnpj = l.cnpj) e ON true
+               WHERE ${w.replace(/\b(tenant_id|removido_em|busca|nome|cnpj|fase)\b/g, "l.$1")}
+               ORDER BY l.fase, l.posicao LIMIT 2000`, p);
   });
 
   app.get<{ Params: { id: string } }>("/api/leads/:id", auth, async (req, reply) => {

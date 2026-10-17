@@ -129,30 +129,29 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
 
 /** Uma passada completa. Idempotente: pode rodar a qualquer hora. */
 export async function rodarUmaVez() {
-  const fontes: string[] = [];
-  if (env.PGFN_AUTO) fontes.push("PGFN_FGTS", "PGFN_PREV", "PGFN_GERAL");
-  if (env.RECEITA_AUTO) fontes.push("RECEITA_CNPJ");
+  // Em serie de proposito: duas cargas de 1 GB em paralelo competem por
+  // disco e por conexao do banco, e nenhuma termina mais cedo por isso.
+  // As views sao recalculadas DEPOIS DE CADA GRUPO: a divida federal
+  // aparece na tela assim que a PGFN termina, sem esperar a hora de
+  // download do cadastro da Receita.
+  const grupos: string[][] = [];
+  if (env.PGFN_AUTO) grupos.push(["PGFN_FGTS", "PGFN_PREV", "PGFN_GERAL"]);
+  if (env.RECEITA_AUTO) grupos.push(["RECEITA_CNPJ"]);
 
-  let mudou = false;
-  for (const c of fontes) {
-    // Em serie de proposito: duas cargas de 1 GB em paralelo competem por
-    // disco e por conexao do banco, e nenhuma termina mais cedo por isso.
-    if (await cuidarDeUmaFonte(c)) mudou = true;
+  let mudouAlgo = false;
+  for (const fontes of grupos) {
+    let mudou = false;
+    for (const c of fontes) if (await cuidarDeUmaFonte(c)) mudou = true;
+    if (mudou) {
+      console.log(`[agendador] ${fontes.join(", ")} mudou, recalculando views`);
+      await atualizarViews();
+      mudouAlgo = true;
+    }
   }
-  if (mudou) {
-    console.log("[agendador] origem mudou, recalculando views");
-    await atualizarViews();
-  } else {
-    console.log("[agendador] nada novo");
-  }
-  return mudou;
+  if (!mudouAlgo) console.log("[agendador] nada novo");
+  return mudouAlgo;
 }
 
-/**
- * Laco diario. Confere de hora em hora se ja passou a hora marcada e se
- * ainda nao rodou hoje; assim um restart no meio do dia nao perde a
- * janela nem dispara duas vezes.
- */
 export function iniciarAgendador() {
   if (!env.AGENDADOR_ATIVO) {
     console.log("[agendador] desligado (AGENDADOR_ATIVO=false)");
