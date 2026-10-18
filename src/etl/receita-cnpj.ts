@@ -113,6 +113,10 @@ const csv = (v: string) => (v === "" ? "" : /[";\n,]/.test(v) ? `"${v.replace(/"
 export function telefone(ddd: string, num: string): string {
   const d = (ddd || "").replace(/\D/g, ""), n = (num || "").replace(/\D/g, "");
   if (d.length !== 2 || n.length < 8 || /^(0+|9+)$/.test(n)) return "";
+  // A Receita guarda 8 digitos. Celular (comeca com 6-9) ganhou o nono
+  // digito em todo o pais (2012-2016): sem ele o numero nao existe, o
+  // WhatsApp nao abre e a marcacao de "celular" nunca acontece.
+  if (n.length === 8 && /^[6-9]/.test(n)) return d + "9" + n;
   return d + n;
 }
 

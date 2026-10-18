@@ -314,6 +314,19 @@ export async function carregarEstabelecimentos(periodo: string) {
 
     await cli.query("SET statement_timeout = 0");
     await cli.query("SET work_mem = '256MB'");
+    // Nome da Receita diferente do IBGE (PARATI x Paraty, SANTANA DO
+    // LIVRAMENTO x Sant'Ana do Livramento, BRASOPOLIS x Brazopolis): o que
+    // nao casou pelo nome exato casa pelo mais parecido da mesma UF.
+    const SEM_ACENTO = `upper(translate(r.nome, 'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÉÊÍÓÔÕÚÇ''', 'aaaaaeeeeiiiiooooouuuucAAAAEEIOOOUC '))`;
+    const fix = await cli.query(`UPDATE fisco.rfb_stage_estab s SET municipio_ibge = m.ibge
+        FROM (SELECT DISTINCT ON (x.uf, x.municipio) x.uf, x.municipio, r.municipio_ibge AS ibge
+                FROM (SELECT DISTINCT uf, municipio FROM fisco.rfb_stage_estab
+                       WHERE coalesce(municipio_ibge, '') = '' AND uf <> 'EX' AND municipio <> '') x
+                JOIN fisco.municipio_ref r ON r.uf = x.uf AND similarity(${SEM_ACENTO}, x.municipio) > 0.4
+               ORDER BY x.uf, x.municipio, similarity(${SEM_ACENTO}, x.municipio) DESC) m
+       WHERE s.uf = m.uf AND s.municipio = m.municipio AND coalesce(s.municipio_ibge, '') = ''`)
+      .catch((e: Error) => { console.error("[rfb+] municipios por semelhanca:", e.message); return { rowCount: 0 }; });
+    if (fix.rowCount) console.log(`[rfb+] ${fix.rowCount} estabelecimentos com município casado por semelhança`);
     await cli.query(`CREATE INDEX ON fisco.rfb_stage_estab (uf, cnpj)`);
     await cli.query(`ANALYZE fisco.rfb_stage_estab`);
 
@@ -451,15 +464,22 @@ export async function marcarContador(periodo: string) {
       SELECT 't', telefone FROM fisco.estabelecimento WHERE telefone IS NOT NULL
        GROUP BY telefone HAVING count(DISTINCT cnpj_raiz) >= 5`);
     await cli.query(`CREATE INDEX ON fisco.rfb_contato_rep (tipo, valor)`);
-    const e = await cli.query(`UPDATE fisco.estabelecimento t SET email_contador = x.v
-        FROM (SELECT uf, cnpj, (email ~* 'contab|contador|contabil|escritorio|assessoria'
-                 OR EXISTS (SELECT 1 FROM fisco.rfb_contato_rep r WHERE r.tipo = 'e' AND r.valor = e.email)) AS v
-                FROM fisco.estabelecimento e WHERE email IS NOT NULL) x
-       WHERE t.uf = x.uf AND t.cnpj = x.cnpj AND t.email_contador IS DISTINCT FROM x.v`);
-    const t = await cli.query(`UPDATE fisco.estabelecimento t SET telefone_contador = x.v
-        FROM (SELECT uf, cnpj, EXISTS (SELECT 1 FROM fisco.rfb_contato_rep r WHERE r.tipo = 't' AND r.valor = e.telefone) AS v
-                FROM fisco.estabelecimento e WHERE telefone IS NOT NULL) x
-       WHERE t.uf = x.uf AND t.cnpj = x.cnpj AND t.telefone_contador IS DISTINCT FROM x.v`);
+    // So grava quem MUDA, e so o "true": as consultas leem coalesce(flag,
+    // false), entao NULL ja vale "nao e do contador". Na carga inicial isso
+    // escreve os positivos (minoria) em vez de reescrever 60 milhoes de linhas.
+    const EH_EMAIL = `(e.email ~* 'contab|contador|contabil|escritorio|assessoria'
+        OR EXISTS (SELECT 1 FROM fisco.rfb_contato_rep r WHERE r.tipo = 'e' AND r.valor = e.email))`;
+    const EH_TEL = `EXISTS (SELECT 1 FROM fisco.rfb_contato_rep r WHERE r.tipo = 't' AND r.valor = e.telefone)`;
+    const e1 = await cli.query(`UPDATE fisco.estabelecimento e SET email_contador = true
+        WHERE e.email IS NOT NULL AND NOT coalesce(e.email_contador, false) AND ${EH_EMAIL}`);
+    const e2 = await cli.query(`UPDATE fisco.estabelecimento e SET email_contador = NULL
+        WHERE e.email_contador AND NOT (e.email IS NOT NULL AND ${EH_EMAIL})`);
+    const t1 = await cli.query(`UPDATE fisco.estabelecimento e SET telefone_contador = true
+        WHERE e.telefone IS NOT NULL AND NOT coalesce(e.telefone_contador, false) AND ${EH_TEL}`);
+    const t2 = await cli.query(`UPDATE fisco.estabelecimento e SET telefone_contador = NULL
+        WHERE e.telefone_contador AND NOT (e.telefone IS NOT NULL AND ${EH_TEL})`);
+    const e = { rowCount: (e1.rowCount ?? 0) + (e2.rowCount ?? 0) };
+    const t = { rowCount: (t1.rowCount ?? 0) + (t2.rowCount ?? 0) };
     await cli.query(`DROP TABLE fisco.rfb_contato_rep`);
     await etapa(periodo, "contador", "ok", { atualizadas: (e.rowCount ?? 0) + (t.rowCount ?? 0) });
   } catch (err) {

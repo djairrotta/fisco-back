@@ -24,6 +24,57 @@ export function termoDeBusca(razao: string | null, fantasia: string | null) {
   return f.length >= 3 ? f : limpa(razao || "");
 }
 
+/**
+ * Pesquisa uma empresa (com cache de 30 dias). Usada pela ficha e pela
+ * fila de enriquecimento de listas importadas.
+ */
+export async function pesquisarNaInternet(cnpj: string, forcar = false):
+  Promise<{ dados: any; status: string; criado_em: string; cache: boolean } | { erro: string; codigo: number }> {
+  if (!URL() || !CHAVE()) return { codigo: 412, erro: "A pesquisa na internet precisa do serviço fiscojev configurado (JEV_SERVICE_URL e JEV_SERVICE_KEY)." };
+  if (!forcar) {
+    const [r] = await q(`SELECT dados, status, criado_em FROM fisco.pesquisa_web
+                          WHERE cnpj = $1 AND criado_em > now() - make_interval(days => $2)`, [cnpj, VALIDADE_DIAS]);
+    if (r) return { ...r, cache: true };
+  }
+  const c = await consultarCadastro(cnpj).catch(() => null);
+  const [d] = c?.razao_social ? [null] : await q<{ nome: string; uf: string }>(
+    `SELECT coalesce(e.razao_social, d.nome) AS nome, coalesce(e.uf, d.uf) AS uf
+       FROM (SELECT 1) x LEFT JOIN estabelecimento e ON e.cnpj = $1
+       LEFT JOIN mv_devedor d ON d.cnpj_raiz = left($1, 8)`, [cnpj]).catch(() => []);
+  const nome = c?.razao_social || d?.nome;
+  if (!nome) return { codigo: 404, erro: "Sem razão social para pesquisar." };
+  const corpo = {
+    nome, fantasia: c?.nome_fantasia || null, cnpj,
+    busca: termoDeBusca(nome, c?.nome_fantasia ?? null),
+    municipio: c?.endereco.municipio || null, uf: c?.endereco.uf || d?.uf || null,
+  };
+  let r: Response;
+  try {
+    r = await fetch(URL() + "/pesquisar", {
+      method: "POST", headers: { "content-type": "application/json", "x-chave": CHAVE() },
+      body: JSON.stringify(corpo), signal: AbortSignal.timeout(150_000),
+    });
+  } catch {
+    return { codigo: 503, erro: "Serviço de pesquisa (fiscojev) não respondeu." };
+  }
+  const dados = await r.json().catch(() => ({ erro: "resposta inválida do serviço" }));
+  if (!r.ok) return { codigo: r.status === 429 ? 429 : r.status === 412 ? 412 : 502, erro: dados.erro || `falhou (${r.status})` };
+  const status = dados.status_navegacao || "done";
+  const [salvo] = await q(
+    `INSERT INTO fisco.pesquisa_web (cnpj, dados, status) VALUES ($1, $2, $3)
+     ON CONFLICT (cnpj) DO UPDATE SET dados = EXCLUDED.dados, status = EXCLUDED.status, criado_em = now()
+     RETURNING dados, status, criado_em`, [cnpj, JSON.stringify({ ...dados, consulta: corpo }), status]);
+  return { ...salvo, cache: false };
+}
+
+export async function jevConfigurado() {
+  if (!URL() || !CHAVE()) return false;
+  try {
+    const h = await (await fetch(URL() + "/health", { signal: AbortSignal.timeout(4000) })).json();
+    return !!(h.modelo && h.navegador === "ok");
+  } catch { return false; }
+}
+
 export default async function rotasInternet(app: FastifyInstance) {
   const auth = { onRequest: [(app as any).authenticate] };
 
@@ -52,41 +103,9 @@ export default async function rotasInternet(app: FastifyInstance) {
       if (!cnpjValido(cnpj)) return reply.code(400).send({ erro: "CNPJ inválido." });
       if (!URL() || !CHAVE()) return reply.code(412).send({ erro: "A pesquisa na internet precisa do serviço fiscojev configurado (JEV_SERVICE_URL e JEV_SERVICE_KEY)." });
 
-      if (req.query.forcar !== "1") {
-        const [r] = await q(`SELECT dados, status, criado_em FROM fisco.pesquisa_web
-                              WHERE cnpj = $1 AND criado_em > now() - make_interval(days => $2)`, [cnpj, VALIDADE_DIAS]);
-        if (r) return { ...r, cache: true };
-      }
-
-      const c = await consultarCadastro(cnpj).catch(() => null);
-      const [d] = c?.razao_social ? [null] : await q<{ nome: string; uf: string }>(
-        `SELECT nome, uf FROM mv_devedor WHERE cnpj_raiz = $1`, [cnpj.slice(0, 8)]).catch(() => []);
-      const nome = c?.razao_social || d?.nome;
-      if (!nome) return reply.code(404).send({ erro: "Sem razão social para pesquisar." });
-      const corpo = {
-        nome, fantasia: c?.nome_fantasia || null, cnpj,
-        busca: termoDeBusca(nome, c?.nome_fantasia ?? null),
-        municipio: c?.endereco.municipio || null, uf: c?.endereco.uf || d?.uf || null,
-      };
-
-      let r: Response;
-      try {
-        r = await fetch(URL() + "/pesquisar", {
-          method: "POST", headers: { "content-type": "application/json", "x-chave": CHAVE() },
-          body: JSON.stringify(corpo), signal: AbortSignal.timeout(150_000),
-        });
-      } catch {
-        return reply.code(503).send({ erro: "Serviço de pesquisa (fiscojev) não respondeu." });
-      }
-      const dados = await r.json().catch(() => ({ erro: "resposta inválida do serviço" }));
-      if (!r.ok) return reply.code(r.status === 429 ? 429 : r.status === 412 ? 412 : 502).send({ erro: dados.erro || `falhou (${r.status})` });
-
-      const status = dados.status_navegacao || "done";
-      const [salvo] = await q(
-        `INSERT INTO fisco.pesquisa_web (cnpj, dados, status) VALUES ($1, $2, $3)
-         ON CONFLICT (cnpj) DO UPDATE SET dados = EXCLUDED.dados, status = EXCLUDED.status, criado_em = now()
-         RETURNING dados, status, criado_em`, [cnpj, JSON.stringify({ ...dados, consulta: corpo }), status]);
-      return { ...salvo, cache: false };
+      const r = await pesquisarNaInternet(cnpj, req.query.forcar === "1");
+      if ("erro" in r) return reply.code(r.codigo).send({ erro: r.erro });
+      return r;
     });
 
   /**

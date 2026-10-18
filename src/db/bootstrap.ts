@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { pool } from "./pool.js";
 
 /**
@@ -30,11 +31,37 @@ export async function migrarNoBoot(): Promise<{ ok: boolean; erro?: string }> {
 
     const raiz = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "sql");
     const arquivos = (await readdir(raiz)).filter((f) => f.endsWith(".sql")).sort();
+    // Arquivo ja aplicado com o MESMO conteudo nao roda de novo. Rodar tudo
+    // a cada boot pedia lock nas tabelas grandes (CREATE INDEX IF NOT EXISTS
+    // pega lock antes de ver que o indice existe) e, durante uma carga de
+    // horas, a migracao inteira ficava pendente. MIGRAR_TUDO=1 forca.
+    await cli.query(`CREATE SCHEMA IF NOT EXISTS fisco`);
+    await cli.query(`CREATE TABLE IF NOT EXISTS fisco.migracao_aplicada (
+      arquivo text PRIMARY KEY, hash text NOT NULL, aplicada_em timestamptz NOT NULL DEFAULT now())`);
+    const feitas = new Map((await cli.query(`SELECT arquivo, hash FROM fisco.migracao_aplicada`)).rows.map((r: any) => [r.arquivo, r.hash]));
+    const forcar = /^(1|true|sim)$/i.test(process.env.MIGRAR_TUDO ?? "");
+    const falhas: string[] = [];
+    let rodadas = 0;
     for (const f of arquivos) {
       atual = f;
-      await cli.query(await readFile(join(raiz, f), "utf8"));
+      const sql = await readFile(join(raiz, f), "utf8");
+      const hash = createHash("sha256").update(sql).digest("hex").slice(0, 32);
+      if (!forcar && feitas.get(f) === hash) continue;
+      try {
+        await cli.query(sql);
+        await cli.query(`INSERT INTO fisco.migracao_aplicada (arquivo, hash) VALUES ($1, $2)
+                         ON CONFLICT (arquivo) DO UPDATE SET hash = EXCLUDED.hash, aplicada_em = now()`, [f, hash]);
+        rodadas++;
+      } catch (e) {
+        // Lock ocupado (carga em andamento): segue para os proximos arquivos
+        // e este fica para a proxima tentativa. Outro erro: para aqui, porque
+        // os arquivos seguintes podem depender deste.
+        if (/lock timeout/i.test(String(e))) { falhas.push(f); continue; }
+        throw e;
+      }
     }
-    console.log(`[boot] ${arquivos.length} migracoes aplicadas`);
+    if (falhas.length) throw new Error(`lock timeout em ${falhas.join(", ")} (os demais foram aplicados)`);
+    console.log(`[boot] ${rodadas} de ${arquivos.length} migracoes aplicadas (as outras ja estavam)`);
     return { ok: true };
   } catch (e) {
     let erro = `${atual}: ${e instanceof Error ? e.message : String(e)}`;

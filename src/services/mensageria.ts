@@ -3,38 +3,31 @@
  * Regra global da casa: tudo ENVIA pelo Resend; recebimento via Cloudflare
  * roteado para o poste.io. Evolution API nao entra em nenhum projeto.
  *
- * ========================================================================
- * LIMITE DELIBERADO: ESTE MODULO FALA COM O ASSINANTE, NAO COM O PROSPECTO.
- * ========================================================================
- * O concorrente generalista vende disparo em massa de e-mail e WhatsApp
- * para prospeccao. Para advogado isso e captacao de clientela: o Codigo de
- * Etica da OAB e o Provimento 205/2021 do CFOAB vedam oferta de servico a
- * destinatario indeterminado e publicidade que nao seja meramente
- * informativa. Um escritorio que usar essa funcao como o concorrente
- * anuncia se expoe a representacao disciplinar.
- *
- * Por isso aqui so existe envio para o PROPRIO assinante: alerta de
- * publicacao, prazo, laudo pronto, cobranca. Nao ha e nao deve haver
- * funcao de disparo em lote para lista de empresas prospectadas.
- * Se alguem pedir, a resposta e esta nota.
+ * Publico do produto: contadores e gestores de empresas. O envio em massa
+ * para empresas (campanhas) existe e mora em routes/campanhas.ts, com as
+ * travas que o tornam defensavel (LGPD, legitimo interesse em contato B2B):
+ * descadastro em todo envio e respeitado para sempre, identificacao do
+ * remetente, limite diario, intervalo entre envios, janela de horario e
+ * dias uteis, e por padrao sem o contato do contador da empresa.
  */
 import { request } from "undici";
 import { env } from "../lib/env.js";
 
 export async function enviarEmail(o: {
-  /** SEMPRE o e-mail do proprio assinante. Ver a nota no topo do arquivo. */
-  para: string; assunto: string; html: string; anexos?: { filename: string; content: string }[];
+  para: string; assunto: string; html: string; texto?: string; anexos?: { filename: string; content: string }[];
+  remetenteNome?: string | null; responderPara?: string | null; cabecalhos?: Record<string, string>;
 }) {
   const r = await request("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: env.EMAIL_REMETENTE, to: o.para, subject: o.assunto,
-      html: o.html, attachments: o.anexos,
+      from: o.remetenteNome ? `${o.remetenteNome.replace(/[<>"]/g, "")} <${env.EMAIL_REMETENTE}>` : env.EMAIL_REMETENTE,
+      to: o.para, subject: o.assunto, html: o.html, text: o.texto, attachments: o.anexos,
+      reply_to: o.responderPara || undefined, headers: o.cabecalhos,
     }),
   });
-  if (r.statusCode >= 300) throw new Error(`Resend ${r.statusCode}`);
-  return r.body.json();
+  if (r.statusCode >= 300) throw new Error(`Resend ${r.statusCode}: ${(await r.body.text()).slice(0, 200)}`);
+  return r.body.json() as Promise<{ id?: string }>;
 }
 
 /** Caixas do poste.io: leitura e aliases do dominio proprio. */

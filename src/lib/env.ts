@@ -27,6 +27,8 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   OPENROUTER_API_KEY: z.string().optional(),
   MODELO_PREENCHIMENTO: z.string().default("anthropic/claude-haiku-5.5"),
+  MODELO_IA: z.string().default("anthropic/claude-haiku-5.5"),
+  MODELO_IA_FALLBACK: z.string().default("deepseek/deepseek-v4.1-flash"),
   MODELO_PREENCHIMENTO_FALLBACK: z.string().default("deepseek/deepseek-v4.1-flash"),
   RACIOCINIO_DESLIGADO: booleano(true),
   HERMES_BASE_URL: z.string().optional(),
@@ -39,6 +41,8 @@ const schema = z.object({
   JEV_BASE_URL: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_REMETENTE: z.string().default("no-reply@fisco.judinfo.com.br"),
+  /** Endereco publico da API (link de descadastro nos e-mails). */
+  API_PUBLICA_URL: z.string().default("https://api-fisco.judinfo.com.br"),
   POSTEIO_BASE_URL: z.string().optional(),
   POSTEIO_AUTH: z.string().optional(),
   OPENWA_BASE_URL: z.string().optional(),
