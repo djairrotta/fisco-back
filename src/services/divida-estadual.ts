@@ -14,6 +14,7 @@
  */
 import { env } from "../lib/env.js";
 import { q, pool } from "../db/pool.js";
+import { consultarPgeSp, pgeSpConfigurada } from "./pge-sp.js";
 
 export type UfEstadual = "SP" | "MG";
 
@@ -53,6 +54,26 @@ export async function consultarDividaEstadual(
       quantidade: c.quantidade, consultado_em: c.consultado_em, cache: true,
       ...(c.erro ? { indisponivel: c.erro } : {}),
     };
+  }
+
+  // SP: API oficial da PGE-SP quando o escritorio tiver a assinatura.
+  if (uf === "SP" && pgeSpConfigurada()) {
+    try {
+      const r = await consultarPgeSp(limpo);
+      await pool.query(
+        `INSERT INTO divida_estadual (cnpj, uf, tem_debito, valor_total, quantidade, detalhe, fonte, consultado_em, erro)
+         VALUES ($1,'SP',$2,$3,$4,$5,'pge-sp-api', now(), NULL)
+         ON CONFLICT (cnpj, uf) DO UPDATE SET tem_debito = EXCLUDED.tem_debito, valor_total = EXCLUDED.valor_total,
+           quantidade = EXCLUDED.quantidade, detalhe = EXCLUDED.detalhe, fonte = EXCLUDED.fonte, consultado_em = now(), erro = NULL`,
+        [limpo, r.tem_debito, r.valor_total, r.quantidade, JSON.stringify(r.detalhe)]);
+      return { uf, tem_debito: r.tem_debito, valor_total: r.valor_total, quantidade: r.quantidade, consultado_em: new Date().toISOString(), cache: false };
+    } catch (e) {
+      if (!env.INFOSIMPLES_TOKEN) {
+        return { uf, tem_debito: null, valor_total: null, quantidade: null, consultado_em: new Date().toISOString(), cache: false,
+                 indisponivel: `API da PGE-SP: ${String(e instanceof Error ? e.message : e).slice(0, 160)}` };
+      }
+      // cai para a Infosimples
+    }
   }
 
   if (!env.INFOSIMPLES_TOKEN) {
@@ -103,7 +124,7 @@ export async function consultarDividaEstadual(
            ...(erro ? { indisponivel: erro } : {}) };
 }
 
-export const consultaEstadualConfigurada = () => !!env.INFOSIMPLES_TOKEN;
+export const consultaEstadualConfigurada = () => !!env.INFOSIMPLES_TOKEN || pgeSpConfigurada();
 
 /**
  * Varias empresas de uma vez (leads, selecao da pesquisa). Duas consultas
