@@ -20,6 +20,7 @@ import rotasHistorico from "./routes/historico.js";
 import rotasBusca from "./routes/busca.js";
 import rotasExportar from "./routes/exportar.js";
 import rotasIa from "./routes/ia.js";
+import rotasMonitoramento, { iniciarMonitoramento } from "./routes/monitoramento.js";
 import rotasApiPublica from "./routes/api-publica.js";
 import rotasCrmExtra, { iniciarLembretes } from "./routes/crm-extra.js";
 import rotasCampanhas, { iniciarEnvioCampanhas } from "./routes/campanhas.js";
@@ -105,6 +106,7 @@ await app.register(rotasHistorico);
 await app.register(rotasBusca);
 await app.register(rotasExportar);
 await app.register(rotasIa);
+await app.register(rotasMonitoramento);
 await app.register(rotasApiPublica);
 await app.register(rotasCrmExtra);
 await app.register(rotasCampanhas);
@@ -135,4 +137,4 @@ async function migracaoAplicada() {
 const tarefasDeBoot = migracaoAplicada()
   .then(() => preencherViewsVazias().then(recalcularSeDadoNovo).then(garantirTransacaoSp).then(garantirReferencias).then(aquecerPainel))
   .catch(() => {});
-void tarefasDeBoot.finally(() => { iniciarAgendador(); iniciarFilaInternet(); iniciarEnvioCampanhas(); iniciarLembretes(); });
+void tarefasDeBoot.finally(() => { iniciarAgendador(); iniciarFilaInternet(); iniciarEnvioCampanhas(); iniciarLembretes(); iniciarMonitoramento(); });

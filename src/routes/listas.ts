@@ -83,7 +83,7 @@ export default async function rotasListas(app: FastifyInstance) {
 
   app.get("/api/listas", auth, async (req) => {
     const { tenant } = sessao(req);
-    return q(`SELECT l.id, l.nome, cardinality(l.cnpjs) AS total, l.invalidos, l.criado_em,
+    return q(`SELECT l.id, l.nome, cardinality(l.cnpjs) AS total, l.invalidos, l.criado_em, l.monitorar,
                      (SELECT count(*) FROM fila_internet f WHERE f.lista_id = l.id AND f.status = 'pendente') AS fila_pendente,
                      (SELECT count(*) FROM fila_internet f WHERE f.lista_id = l.id AND f.status = 'feito') AS fila_feito
                 FROM lista_importada l WHERE l.tenant_id = $1 ORDER BY l.criado_em DESC LIMIT 100`, [tenant]);
