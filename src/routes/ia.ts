@@ -136,6 +136,8 @@ function erroIa(e: unknown, reply: any) {
 export default async function rotasIa(app: FastifyInstance) {
   const auth = { onRequest: [(app as any).authenticate] };
 
+  app.get("/api/ia/estado", auth, async () => ({ configurado: !!process.env.OPENROUTER_API_KEY }));
+
   app.post<{ Body: { texto?: string } }>("/api/ia/busca", auth, async (req, reply) => {
     const texto = String(req.body?.texto || "").trim().slice(0, 800);
     if (texto.length < 4) return reply.code(400).send({ erro: "Descreva as empresas que procura." });
