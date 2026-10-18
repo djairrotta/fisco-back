@@ -19,6 +19,7 @@ import { pool, q } from "../db/pool.js";
 import { env } from "../lib/env.js";
 import { carregarBase, BASES, type Origem } from "./pgfn.js";
 import { atualizarViews } from "./refresh-views.js";
+import { rodarHistorico } from "./pgfn-historico.js";
 import { versaoDisponivelReceita, carregarReceita, carregarSocios, carregarEmpresasSimples } from "./receita-cnpj.js";
 
 const RAIZ_PGFN = "https://dadosabertos.pgfn.gov.br";
@@ -149,6 +150,13 @@ export async function rodarUmaVez() {
     }
   }
   if (!mudouAlgo) console.log("[agendador] nada novo");
+  // Serie historica: depois das cargas principais, nunca junto delas
+  // (disco e conexao). Cada passada termina a fila pendente; trimestre
+  // novo entra sozinho quando a PGFN publica.
+  if (env.PGFN_HISTORICO) {
+    const r = await rodarHistorico().catch((e) => { console.error("[pgfn-hist]", e); return null; });
+    if (r?.feitos) console.log(`[pgfn-hist] ${r.feitos} trimestre(s) carregado(s)`);
+  }
   return mudouAlgo;
 }
 

@@ -55,6 +55,9 @@ const schema = z.object({
   AGENDADOR_ATIVO: booleano(false),
   AGENDADOR_HORA: z.coerce.number().min(0).max(23).default(4),
   PGFN_AUTO: booleano(true),
+  // Serie historica da PGFN (todos os trimestres desde 2020). Roda depois
+  // das cargas do dia, um trimestre por vez, ate completar a fila.
+  PGFN_HISTORICO: booleano(true),
   RECEITA_AUTO: booleano(false),
 });
 

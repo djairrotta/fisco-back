@@ -21,8 +21,26 @@ interface Filtros {
   ativa?: string; desde?: string; ate?: string; ordem?: string; pagina?: string; limite?: string;
   cadastro?: string; regime?: string | string[]; porte?: string | string[];
   socios_min?: string; socios_max?: string; capital_min?: string; capital_max?: string;
-  estadual?: string; programa?: string; acordo?: string;
+  estadual?: string; programa?: string; acordo?: string; sinal?: string | string[];
 }
+
+/**
+ * Sinais da serie historica da PGFN (mv_devedor_sinais). Cada um vira um
+ * EXISTS: a view de sinais tem uma linha por raiz e indice unico nela.
+ */
+const SINAIS: Record<string, string> = {
+  nova_tri: "s.novas_tri > 0",            // inscricao nova no ultimo trimestre
+  nova_12m: "s.novas_12m > 0",            // inscricao nova nos ultimos 12 meses
+  rescindiu: "s.rescindidas_12m > 0",     // acordo/parcelamento caiu em 12 meses
+  negociou: "s.negociadas_tri > 0",       // parcelou/transacionou no ultimo trimestre
+  ajuizou: "s.ajuizadas_tri > 0",         // foi ajuizada no ultimo trimestre
+  cresceu: "s.variacao_12m_pct >= 10",    // divida cresceu 10%+ em 12 meses
+  caiu: "s.variacao_12m_pct <= -10",      // divida caiu 10%+ em 12 meses
+  quitou: "s.saidas_12m > 0",             // inscricoes que sairam da divida ativa em 12 meses
+  recorrente: "s.trimestres_com_divida >= 8", // devedora em 8+ trimestres
+};
+const SINAL_SUB = (cond: string) =>
+  `EXISTS (SELECT 1 FROM mv_devedor_sinais s WHERE s.cnpj_raiz = d.cnpj_raiz AND ${cond})`;
 
 const ORDENS: Record<string, string> = {
   valor_desc: "valor_total DESC",
@@ -34,6 +52,8 @@ const ORDENS: Record<string, string> = {
   ajuizado: "valor_ajuizado DESC",
   capital: "capital_social DESC NULLS LAST",
   socios: "qtd_socios DESC NULLS LAST",
+  novas: "(SELECT s.novas_12m_valor FROM mv_devedor_sinais s WHERE s.cnpj_raiz = d.cnpj_raiz) DESC NULLS LAST",
+  crescimento: "(SELECT s.variacao_12m_pct FROM mv_devedor_sinais s WHERE s.cnpj_raiz = d.cnpj_raiz) DESC NULLS LAST",
 };
 
 /** Monta o WHERE com parametros posicionais. Exportado para teste. */
@@ -82,6 +102,7 @@ export function montarFiltro(f: Filtros) {
   // Divida estadual de SP publicada em lote (base de transacao da PGE-SP).
   if (f.estadual === "sp") onde.push("EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz)");
   if (f.estadual === "sp_rompido") onde.push("EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz AND t.status ILIKE 'Rompido%')");
+  for (const sn of lista(f.sinal)) if (SINAIS[sn]) onde.push(SINAL_SUB(SINAIS[sn]));
   if (f.valor_min && Number(f.valor_min) > 0) add("valor_total >= ?", Number(f.valor_min));
   if (f.valor_max && Number(f.valor_max) > 0) add("valor_total <= ?", Number(f.valor_max));
   const tributos = lista(f.tributo);
@@ -136,6 +157,11 @@ export default async function rotasPesquisa(app: FastifyInstance) {
     const [linhas, [cont]] = await Promise.all([
       q(`SELECT ${COLUNAS_LISTA},
                 EXISTS (SELECT 1 FROM estadual_transacao_sp t WHERE t.cnpj_raiz = d.cnpj_raiz) AS estadual_sp,
+                (SELECT json_build_object('novas_tri', s.novas_tri, 'novas_12m', s.novas_12m,
+                        'rescindidas_12m', s.rescindidas_12m, 'negociadas_tri', s.negociadas_tri,
+                        'ajuizadas_tri', s.ajuizadas_tri, 'variacao_12m_pct', s.variacao_12m_pct,
+                        'saidas_12m', s.saidas_12m, 'devedora_desde', s.devedora_desde)
+                   FROM mv_devedor_sinais s WHERE s.cnpj_raiz = d.cnpj_raiz) AS sinais,
                 EXISTS (SELECT 1 FROM lead_juridico l
                          WHERE l.tenant_id = $${params.length + 1} AND l.removido_em IS NULL
                            AND left(l.cnpj, 8) = d.cnpj_raiz) AS e_lead
