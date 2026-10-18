@@ -15,7 +15,7 @@ import {
 import { viewPronta } from "../db/views-boot.js";
 import { listarProgramas, programasDaEmpresa, situacaoPrograma } from "../services/programas.js";
 
-interface Filtros {
+export interface Filtros {
   q?: string; uf?: string | string[]; municipio?: string; valor_min?: string; valor_max?: string;
   tributo?: string | string[]; ajuizada?: string; contato?: string; cnae?: string;
   ativa?: string; desde?: string; ate?: string; ordem?: string; pagina?: string; limite?: string;
@@ -57,10 +57,10 @@ const ORDENS: Record<string, string> = {
 };
 
 /** Monta o WHERE com parametros posicionais. Exportado para teste. */
-export function montarFiltro(f: Filtros) {
+export function montarFiltro(f: Filtros, deslocamento = 0) {
   const onde: string[] = [];
   const p: unknown[] = [];
-  const add = (sql: string, v: unknown) => { p.push(v); onde.push(sql.replace("?", `$${p.length}`)); };
+  const add = (sql: string, v: unknown) => { p.push(v); onde.push(sql.replace("?", `$${p.length + deslocamento}`)); };
 
   const texto = (f.q || "").trim();
   if (texto) {

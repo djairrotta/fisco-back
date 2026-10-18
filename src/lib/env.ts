@@ -59,6 +59,8 @@ const schema = z.object({
   // das cargas do dia, um trimestre por vez, ate completar a fila.
   PGFN_HISTORICO: booleano(true),
   RECEITA_AUTO: booleano(false),
+  /** Carga por diferenca de toda a Receita (todas as empresas, com MEI/Simples, socios). */
+  RECEITA_COMPLETA: booleano(true),
 });
 
 export const env = schema.parse(process.env);

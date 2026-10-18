@@ -21,6 +21,7 @@ import { carregarBase, BASES, type Origem } from "./pgfn.js";
 import { atualizarViews } from "./refresh-views.js";
 import { rodarHistorico } from "./pgfn-historico.js";
 import { versaoDisponivelReceita, carregarReceita, carregarSocios, carregarEmpresasSimples } from "./receita-cnpj.js";
+import { carregarReceitaCompleta, periodoCompletoCarregado } from "./receita-completa.js";
 
 const RAIZ_PGFN = "https://dadosabertos.pgfn.gov.br";
 
@@ -102,6 +103,9 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
       }
     }
 
+    // Base completa: o que vale e a carga completa ter terminado no periodo
+    // (a carga antiga, so das devedoras, tambem gravava versao_carregada).
+    if (!ehPgfn && env.RECEITA_COMPLETA) f.versao_carregada = await periodoCompletoCarregado();
     if (disponivel === f.versao_carregada) {
       console.log(`[agendador] ${chave}: ${disponivel} já carregado`);
       return false;
@@ -113,9 +117,12 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
     } else {
       // Cadastro (endereco, cidade, telefone, e-mail) e quadro societario:
       // os dois alimentam leads e cruzamentos, entao vao juntos.
-      await carregarReceita(disponivel);
-      await carregarSocios(disponivel);
-      await carregarEmpresasSimples(disponivel);
+      if (env.RECEITA_COMPLETA) await carregarReceitaCompleta(disponivel);
+      else {
+        await carregarReceita(disponivel);
+        await carregarSocios(disponivel);
+        await carregarEmpresasSimples(disponivel);
+      }
     }
     await pool.query(
       `UPDATE fonte_dados SET versao_carregada = $2, ultima_carga = now() WHERE chave = $1`,

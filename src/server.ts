@@ -17,6 +17,8 @@ import rotasQuadros from "./routes/quadros.js";
 import rotasNotas from "./routes/notas.js";
 import rotasInternet from "./routes/internet.js";
 import rotasHistorico from "./routes/historico.js";
+import rotasBusca from "./routes/busca.js";
+import { garantirReferencias } from "./services/referencias.js";
 import { preencherViewsVazias, recalcularSeDadoNovo } from "./db/views-boot.js";
 import { garantirTransacaoSp } from "./etl/sp-transacao.js";
 import { iniciarAgendador } from "./etl/agendador.js";
@@ -94,6 +96,7 @@ await app.register(rotasQuadros);
 await app.register(rotasNotas);
 await app.register(rotasInternet);
 await app.register(rotasHistorico);
+await app.register(rotasBusca);
 
 // Agendador DEPOIS do listen: carga pesada nao pode atrasar o healthcheck.
 await app.listen({ port: env.PORT, host: "0.0.0.0" });
@@ -118,6 +121,6 @@ async function migracaoAplicada() {
   }
 }
 const tarefasDeBoot = migracaoAplicada()
-  .then(() => preencherViewsVazias().then(recalcularSeDadoNovo).then(garantirTransacaoSp).then(aquecerPainel))
+  .then(() => preencherViewsVazias().then(recalcularSeDadoNovo).then(garantirTransacaoSp).then(garantirReferencias).then(aquecerPainel))
   .catch(() => {});
 void tarefasDeBoot.finally(iniciarAgendador);
