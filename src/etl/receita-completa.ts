@@ -331,7 +331,11 @@ export async function carregarEstabelecimentos(periodo: string) {
     await cli.query(`ANALYZE fisco.rfb_stage_estab`);
 
     const [{ n: existentes }] = (await cli.query(`SELECT count(*)::bigint AS n FROM fisco.estabelecimento`)).rows;
-    const inicial = Number(existentes) < LIMIAR_CARGA_INICIAL;
+    // Carga inicial (derruba indices, apaga e insere em massa) quando o que
+    // ha no banco e pouco perto do que chegou: e o caso da primeira carga
+    // completa depois do modo "so devedoras" (~1 milhao de linhas contra 60).
+    // Inserir 60 milhoes com 12 indices vivos levaria o dia todo.
+    const inicial = Number(existentes) < Math.max(LIMIAR_CARGA_INICIAL, n * 0.3);
     let derrubados: { nome: string; def: string }[] = [];
     if (inicial) {
       derrubados = (await indicesSecundarios(cli, "fisco.estabelecimento"))
