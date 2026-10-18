@@ -84,9 +84,10 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
       ? await versaoDisponivelPgfn(chave as Origem)
       : await versaoDisponivelReceita();
 
+    // A sondagem nao apaga o ultimo erro de CARGA: so uma carga bem-feita
+    // limpa. Antes, a sondagem seguinte zerava o erro e a falha sumia da tela.
     await pool.query(
-      `UPDATE fonte_dados SET ultima_sondagem = now(), versao_disponivel = $2,
-              falhas_seguidas = 0, ultimo_erro = NULL, proxima_tentativa = NULL
+      `UPDATE fonte_dados SET ultima_sondagem = now(), versao_disponivel = $2
         WHERE chave = $1`, [chave, disponivel]);
 
     if (!disponivel) { console.log(`[agendador] ${chave}: nada publicado`); return false; }
@@ -126,7 +127,8 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
       }
     }
     await pool.query(
-      `UPDATE fonte_dados SET versao_carregada = $2, ultima_carga = now() WHERE chave = $1`,
+      `UPDATE fonte_dados SET versao_carregada = $2, ultima_carga = now(),
+              falhas_seguidas = 0, ultimo_erro = NULL, proxima_tentativa = NULL WHERE chave = $1`,
       [chave, disponivel]);
     return true;
   } catch (e) {
@@ -136,8 +138,32 @@ async function cuidarDeUmaFonte(chave: string): Promise<boolean> {
   }
 }
 
-/** Uma passada completa. Idempotente: pode rodar a qualquer hora. */
+/**
+ * Uma passada completa. Idempotente: pode rodar a qualquer hora.
+ * Nunca duas ao mesmo tempo: uma carga da PGFN geral leva horas, e o tique
+ * do dia seguinte comecava outra passada por cima da primeira (duas cargas
+ * de 1,4 GB disputando disco e as mesmas linhas). Trava no processo e no
+ * banco (advisory lock), que vale tambem entre containers.
+ */
+let passadaEmAndamento = false;
 export async function rodarUmaVez() {
+  if (passadaEmAndamento) { console.log("[agendador] passada anterior ainda rodando"); return false; }
+  const cli = await pool.connect();
+  let travou = false;
+  try {
+    const [{ ok }] = (await cli.query(`SELECT pg_try_advisory_lock(hashtext('fisco-agendador')) AS ok`)).rows;
+    if (!ok) { console.log("[agendador] outra passada segura a trava"); return false; }
+    travou = true;
+    passadaEmAndamento = true;
+    return await passada();
+  } finally {
+    passadaEmAndamento = false;
+    if (travou) await cli.query(`SELECT pg_advisory_unlock(hashtext('fisco-agendador'))`).catch(() => {});
+    cli.release();
+  }
+}
+
+async function passada() {
   // Em serie de proposito: duas cargas de 1 GB em paralelo competem por
   // disco e por conexao do banco, e nenhuma termina mais cedo por isso.
   // As views sao recalculadas DEPOIS DE CADA GRUPO: a divida federal

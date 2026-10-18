@@ -9,6 +9,19 @@ export default async function rotasFontes(app: FastifyInstance) {
               ultima_sondagem, ultima_carga, falhas_seguidas, ultimo_erro
          FROM fonte_dados ORDER BY chave`));
 
+  /** Andamento das cargas (sem dado de empresa): para acompanhar de fora. */
+  app.get("/api/fontes/cargas", async () => ({
+    pgfn: await q(`SELECT origem, periodo, comecou_em, terminou_em, left(erro, 300) AS erro, linhas_aceitas
+                     FROM carga_etl ORDER BY comecou_em DESC NULLS LAST LIMIT 8`).catch(() => []),
+    receita: await q(`SELECT periodo, etapa, status, comecou_em, terminou_em, left(erro, 300) AS erro, inseridas, atualizadas, removidas
+                        FROM rfb_carga ORDER BY comecou_em DESC NULLS LAST LIMIT 8`).catch(() => []),
+    historico: await q(`SELECT status, count(*) AS n, max(terminou_em) AS ultimo FROM pgfn_hist_carga GROUP BY 1`).catch(() => []),
+    extras: await q(`SELECT fonte, ultima_carga, linhas, left(erro, 200) AS erro FROM fonte_extra ORDER BY fonte`).catch(() => []),
+    em_execucao: await q(`SELECT left(regexp_replace(query, $$'[^']*'$$, '?', 'g'), 80) AS sql, round(extract(epoch FROM now() - query_start)) AS seg, wait_event_type
+                            FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND pid <> pg_backend_pid()
+                             AND query NOT ILIKE '%pg_stat_activity%' ORDER BY query_start LIMIT 6`).catch(() => []),
+  }));
+
   /** Divida estadual sob demanda, so para assinante: cada consulta custa. */
   app.get<{ Params: { cnpj: string; uf: string } }>(
     "/api/empresas/:cnpj/divida-estadual/:uf",
