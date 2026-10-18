@@ -19,7 +19,7 @@ import { montarFiltro, type Filtros } from "./pesquisa.js";
 import { SECOES } from "../services/referencias.js";
 
 export interface FiltrosBusca {
-  q?: string; email?: string; telefone?: string; cnpjs?: string; lista?: string;
+  q?: string; email?: string; telefone?: string; cnpjs?: string; lista?: string; marca?: string; sem_marca?: string;
   secao?: string; cnae?: string; cnae_secundario?: string;
   uf?: string; municipio?: string; bairro?: string; cep?: string; logradouro?: string; numero?: string;
   raio_km?: string; raio_municipio?: string; hab_min?: string; hab_max?: string;
@@ -70,6 +70,20 @@ export async function montarBusca(f: FiltrosBusca, tenant?: string) {
   }
   const cnpjs = lista(f.cnpjs).map((x) => x.replace(/[^0-9A-Z]/gi, "").toUpperCase()).filter((x) => /^[0-9A-Z]{12}\d{2}$/.test(x));
   if (cnpjs.length) add("e.cnpj = ANY(?)", cnpjs.slice(0, 5000));
+  // Bases extras (empresa_marca): "fonte" ou "fonte:tipo", varios = qualquer um.
+  for (const [chave, neg] of [["marca", false], ["sem_marca", true]] as const) {
+    const ms = lista((f as any)[chave]).slice(0, 20);
+    if (!ms.length) continue;
+    const ors: string[] = [];
+    for (const m of ms) {
+      const [fonte, ...resto] = m.split(":");
+      const tipo = resto.join(":");
+      p.push(fonte); let c = `(m.fonte = $${p.length}`;
+      if (tipo) { p.push(tipo); c += ` AND m.tipo = $${p.length}`; }
+      ors.push(c + ")");
+    }
+    onde.push(`${neg ? "NOT " : ""}EXISTS (SELECT 1 FROM empresa_marca m WHERE m.cnpj_raiz = e.cnpj_raiz AND (${ors.join(" OR ")}))`);
+  }
   // Lista importada: resolvida aqui (array de CNPJs) para o filtro usar a chave primaria.
   if (f.lista && tenant && /^[0-9a-f-]{36}$/i.test(f.lista)) {
     const [l] = await q<{ cnpjs: string[] }>(`SELECT cnpjs FROM lista_importada WHERE id = $1 AND tenant_id = $2`, [f.lista, tenant]);
@@ -266,6 +280,12 @@ export default async function rotasBusca(app: FastifyInstance) {
     return { ok: true };
   });
 
+  /** Bases extras disponiveis para filtro (fonte, tipo, quantas empresas). */
+  app.get("/api/busca/marcas", auth, async () => estadoCache("marcas", async () => ({
+    fontes: await q(`SELECT f.fonte, f.ultima_carga, f.linhas, f.erro FROM fonte_extra f ORDER BY f.fonte`),
+    tipos: await q(`SELECT fonte, tipo, count(DISTINCT cnpj_raiz) AS empresas FROM empresa_marca GROUP BY 1, 2 ORDER BY 1, 3 DESC`),
+  })));
+
   /** Contagem rapida para a previa enquanto o usuario mexe nos filtros. */
   app.get<{ Querystring: FiltrosBusca }>("/api/busca/contagem", auth, async (req) => {
     const { where, params } = await montarBusca(req.query, sessao(req).tenant);
@@ -445,6 +465,7 @@ export default async function rotasBusca(app: FastifyInstance) {
          FROM estabelecimento e WHERE e.cnpj_raiz = $1 ORDER BY e.matriz DESC, e.situacao = 2 DESC, e.uf, e.municipio LIMIT 500`, [raiz]);
     const [tot] = await q<{ n: string; ativos: string }>(
       `SELECT count(*) AS n, count(*) FILTER (WHERE situacao = 2) AS ativos FROM estabelecimento WHERE cnpj_raiz = $1`, [raiz]);
-    return { estab: estab ?? null, secundarios, filiais, total_estab: Number(tot?.n ?? 0), ativos: Number(tot?.ativos ?? 0) };
+    const marcas = await q(`SELECT fonte, tipo, ano, valor, detalhe FROM empresa_marca WHERE cnpj_raiz = $1 ORDER BY fonte, ano DESC NULLS LAST`, [raiz]).catch(() => []);
+    return { estab: estab ?? null, secundarios, filiais, marcas, total_estab: Number(tot?.n ?? 0), ativos: Number(tot?.ativos ?? 0) };
   });
 }

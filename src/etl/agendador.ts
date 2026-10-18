@@ -20,6 +20,7 @@ import { env } from "../lib/env.js";
 import { carregarBase, BASES, type Origem } from "./pgfn.js";
 import { atualizarViews } from "./refresh-views.js";
 import { rodarHistorico } from "./pgfn-historico.js";
+import { rodarBasesExtras } from "./bases-extras.js";
 import { versaoDisponivelReceita, carregarReceita, carregarSocios, carregarEmpresasSimples } from "./receita-cnpj.js";
 import { carregarReceitaCompleta, periodoCompletoCarregado } from "./receita-completa.js";
 
@@ -163,6 +164,12 @@ export async function rodarUmaVez() {
   if (env.PGFN_HISTORICO) {
     const r = await rodarHistorico().catch((e) => { console.error("[pgfn-hist]", e); return null; });
     if (r?.feitos) console.log(`[pgfn-hist] ${r.feitos} trimestre(s) carregado(s)`);
+  }
+  // Bases extras (regime ECF, SISEN, parcelamentos, sancoes...): cada uma
+  // tem a sua validade; so recarrega a vencida.
+  if (env.BASES_EXTRAS) {
+    const f = await rodarBasesExtras().catch((e) => { console.error("[extras]", e); return []; });
+    if (f.length) console.log(`[extras] recarregadas: ${f.join(", ")}`);
   }
   return mudouAlgo;
 }

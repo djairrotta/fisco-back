@@ -62,6 +62,7 @@ const schema = z.object({
   // Serie historica da PGFN (todos os trimestres desde 2020). Roda depois
   // das cargas do dia, um trimestre por vez, ate completar a fila.
   PGFN_HISTORICO: booleano(true),
+  BASES_EXTRAS: booleano(true),
   RECEITA_AUTO: booleano(false),
   /** Carga por diferenca de toda a Receita (todas as empresas, com MEI/Simples, socios). */
   RECEITA_COMPLETA: booleano(true),

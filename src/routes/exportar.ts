@@ -48,6 +48,11 @@ export const COLUNAS: Record<string, { rotulo: string; sql: string; grupo: strin
   inscricoes: { rotulo: "Inscrições", sql: "d.qtd_inscricoes", grupo: "Dívida" },
   tributo: { rotulo: "Tributo principal", sql: "d.tributo_principal", grupo: "Dívida" },
   acordo: { rotulo: "Acordo", sql: "CASE WHEN d.qtd_rescindidas > 0 THEN 'rescindido' WHEN d.qtd_negociadas > 0 THEN 'em acordo' WHEN d.cnpj_raiz IS NOT NULL THEN 'sem acordo' END", grupo: "Dívida" },
+  regime_tributario: { rotulo: "Regime tributário (ECF)", sql: "(SELECT CASE m.tipo WHEN 'real' THEN 'Lucro Real' WHEN 'presumido' THEN 'Lucro Presumido' WHEN 'arbitrado' THEN 'Lucro Arbitrado' ELSE 'Imune/isenta' END || ' (' || m.ano || ')' FROM empresa_marca m WHERE m.cnpj_raiz = e.cnpj_raiz AND m.fonte = 'ecf_regime' LIMIT 1)", grupo: "Bases extras" },
+  beneficios: { rotulo: "Benefícios fiscais (SISEN)", sql: "(SELECT string_agg(DISTINCT m.tipo, '; ') FROM empresa_marca m WHERE m.cnpj_raiz = e.cnpj_raiz AND m.fonte = 'sisen')", grupo: "Bases extras", largura: 30 },
+  incentivos: { rotulo: "Incentivos no IRPJ (PAT, Empresa Cidadã…)", sql: "(SELECT string_agg(DISTINCT m.tipo, ', ') FROM empresa_marca m WHERE m.cnpj_raiz = e.cnpj_raiz AND m.fonte = 'incentivo')", grupo: "Bases extras" },
+  parcelamento_saldo: { rotulo: "Saldo em parcelamento na Receita", sql: "(SELECT sum(m.valor) FROM empresa_marca m WHERE m.cnpj_raiz = e.cnpj_raiz AND m.fonte = 'parcelamento')", grupo: "Bases extras" },
+  sancoes: { rotulo: "Sanções (CEIS/CNEP)", sql: "(SELECT string_agg(DISTINCT m.tipo, '; ') FROM empresa_marca m WHERE m.cnpj_raiz = e.cnpj_raiz AND m.fonte IN ('ceis','cnep'))", grupo: "Bases extras", largura: 30 },
   inscricao_antiga: { rotulo: "Inscrição mais antiga", sql: "d.inscricao_mais_antiga", grupo: "Dívida" },
 };
 
@@ -76,7 +81,7 @@ export default async function rotasExportar(app: FastifyInstance) {
         if (v == null) return null;
         if (c === "situacao") return SIT[v] ?? v;
         if (c === "porte") return PORTE[v] ?? v;
-        if (["capital_social", "divida_total", "divida_ajuizada"].includes(c)) return Number(v);
+        if (["capital_social", "divida_total", "divida_ajuizada", "parcelamento_saldo"].includes(c)) return Number(v);
         if (["qtd_socios", "inscricoes"].includes(c)) return Number(v);
         return v;
       };
