@@ -1,0 +1,140 @@
+/*
+ * Correio — design tokens ("clássico sofisticado").
+ * Neutros grafite/marfim, um único acento vindo da marca da caixa ativa
+ * (useMarca define --acento e --acento-texto), materiais translúcidos
+ * no estilo macOS e tipografia do sistema com títulos em serifa (New York).
+ *
+ * Escala de raios (regra única, concêntrica: cresce com a superfície):
+ *   --r-1  6px  selos, chips, campos pequenos
+ *   --r-2 10px  botões, linhas, campos, itens da barra lateral
+ *   --r-3 14px  popovers, cartões, anexos
+ *   --r-4 22px  folhas, janelas, diálogos
+ *   cápsula     toasts, botão central da barra inferior, contadores
+ */
+:root {
+  --fonte: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", Arial, sans-serif;
+  --fonte-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter Display", "Inter", "Helvetica Neue", sans-serif;
+  --fonte-serifa: ui-serif, "New York", "Iowan Old Style", "Charter", "Bitstream Charter", Georgia, serif;
+
+  /* tipo: tamanho / entrelinha / tracking por degrau */
+  --t-titulo-g: 600 30px/1.12 var(--fonte-serifa);
+  --t-titulo: 600 24px/1.16 var(--fonte-serifa);
+  --t-titulo-p: 600 19px/1.2 var(--fonte-serifa);
+  --t-corpo: 400 14px/1.42 var(--fonte);
+  --t-corpo-g: 400 15px/1.45 var(--fonte);
+  --t-nota: 400 12.5px/1.35 var(--fonte);
+  --t-mini: 500 11px/1.2 var(--fonte);
+
+  /* neutros (claro) */
+  --janela: #e9e8e4;
+  --lateral: rgba(233, 232, 228, 0.78);
+  --lateral-borda: rgba(0, 0, 0, 0.06);
+  --superficie: #fbfbfa;
+  --papel: #ffffff;
+  --elevada: rgba(252, 252, 251, 0.86);
+  --elevada-solida: #fcfcfb;
+  --barra: rgba(251, 251, 250, 0.78);
+  --campo: rgba(118, 118, 128, 0.1);
+  --campo-foco: rgba(118, 118, 128, 0.14);
+  --texto: #1d1d1f;
+  --texto-2: #6e6e73;
+  --texto-3: #a1a1a6;
+  --icone: #707075;
+  --linha: rgba(29, 29, 31, 0.085);
+  --linha-forte: rgba(29, 29, 31, 0.14);
+  --preench: rgba(29, 29, 31, 0.05);
+  --preench-2: rgba(29, 29, 31, 0.085);
+  --scrim: rgba(24, 22, 20, 0.28);
+  --sombra-1: 0 1px 2px rgba(30, 28, 24, 0.07), 0 0 0 0.5px rgba(30, 28, 24, 0.05);
+  --sombra-2: 0 12px 32px -8px rgba(30, 28, 24, 0.2), 0 2px 6px rgba(30, 28, 24, 0.06), 0 0 0 0.5px rgba(30, 28, 24, 0.08);
+  --sombra-3: 0 32px 80px -16px rgba(30, 28, 24, 0.36), 0 10px 28px -6px rgba(30, 28, 24, 0.14), 0 0 0 0.5px rgba(30, 28, 24, 0.1);
+  --brilho-borda: inset 0 0.5px 0 rgba(255, 255, 255, 0.8);
+
+  /* acento da caixa ativa */
+  --acento: #0a84ff;
+  --acento-texto: #fff;
+  --acento-tinta: color-mix(in oklab, var(--acento) 90%, black);
+  --acento-suave: color-mix(in oklab, var(--acento) 11%, transparent);
+  --acento-medio: color-mix(in oklab, var(--acento) 20%, transparent);
+  --selecao: color-mix(in oklab, var(--acento) 13%, var(--superficie));
+
+  --perigo: #d70015;
+  --perigo-suave: rgba(215, 0, 21, 0.09);
+  --aviso: #b25f00;
+  --aviso-suave: rgba(255, 159, 10, 0.14);
+  --ok: #1f8a3e;
+  --estrela: #e8a317;
+
+  /* raios */
+  --r-1: 6px;
+  --r-2: 10px;
+  --r-3: 14px;
+  --r-4: 22px;
+
+  /* movimento: curto, ease-out, nunca em loop */
+  --curva: cubic-bezier(0.22, 1, 0.36, 1);
+  --curva-mola: cubic-bezier(0.32, 1.25, 0.5, 1);
+  --d-1: 150ms;
+  --d-2: 200ms;
+  --d-3: 250ms;
+
+  /* medidas */
+  --lateral-l: 248px;
+  --lista-l: 388px;
+  --barra-h: 52px;
+  --tab-h: 54px;
+  --seg-topo: env(safe-area-inset-top, 0px);
+  --seg-base: env(safe-area-inset-bottom, 0px);
+  --seg-esq: env(safe-area-inset-left, 0px);
+  --seg-dir: env(safe-area-inset-right, 0px);
+
+  /* compatibilidade com nomes antigos */
+  --text: var(--texto);
+  --text-2: var(--texto-2);
+  --hairline: var(--linha);
+  --primary: var(--acento);
+  --danger: var(--perigo);
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --janela: #141415;
+    --lateral: rgba(36, 36, 38, 0.74);
+    --lateral-borda: rgba(255, 255, 255, 0.06);
+    --superficie: #1b1b1d;
+    --papel: #1e1e20;
+    --elevada: rgba(44, 44, 47, 0.84);
+    --elevada-solida: #2a2a2d;
+    --barra: rgba(30, 30, 32, 0.76);
+    --campo: rgba(118, 118, 128, 0.2);
+    --campo-foco: rgba(118, 118, 128, 0.28);
+    --texto: #f2f2f4;
+    --texto-2: #9d9da3;
+    --texto-3: #6b6b71;
+    --icone: #a1a1a7;
+    --linha: rgba(255, 255, 255, 0.075);
+    --linha-forte: rgba(255, 255, 255, 0.13);
+    --preench: rgba(255, 255, 255, 0.055);
+    --preench-2: rgba(255, 255, 255, 0.095);
+    --scrim: rgba(0, 0, 0, 0.5);
+    --sombra-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+    --sombra-2: 0 14px 36px -8px rgba(0, 0, 0, 0.6), 0 0 0 0.5px rgba(255, 255, 255, 0.09);
+    --sombra-3: 0 36px 90px -16px rgba(0, 0, 0, 0.75), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+    --brilho-borda: inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
+    --acento-tinta: color-mix(in oklab, var(--acento) 58%, white);
+    --acento-suave: color-mix(in oklab, var(--acento) 22%, transparent);
+    --acento-medio: color-mix(in oklab, var(--acento) 34%, transparent);
+    --selecao: color-mix(in oklab, var(--acento) 26%, var(--superficie));
+    --perigo: #ff6961;
+    --perigo-suave: rgba(255, 105, 97, 0.14);
+    --aviso: #ffb340;
+    --ok: #4cd964;
+    --estrela: #ffc233;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root { --linha: rgba(29, 29, 31, 0.3); --texto-2: #48484c; }
+}

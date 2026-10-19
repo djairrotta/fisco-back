@@ -1,0 +1,28 @@
+{
+  "tasks": {
+    "test": "deno test -A",
+    "check": "deno check main.ts src/ tests/",
+    "dev": "deno run -A --watch main.ts",
+    "start": "deno run -A main.ts"
+  },
+  "imports": {
+    "@hono/hono": "jsr:@hono/hono@4",
+    "@std/assert": "jsr:@std/assert@1",
+    "postal-mime": "npm:postal-mime@^4.0.2",
+    "postgres": "npm:postgres@3",
+    "@simplewebauthn/server": "npm:@simplewebauthn/server@13",
+    "web-push": "npm:web-push@3",
+    "zod": "npm:zod@3",
+    "imapflow": "npm:imapflow@2",
+    "nodemailer": "npm:nodemailer@10",
+    "@types/nodemailer": "npm:@types/nodemailer@8",
+    "sanitize-html": "npm:sanitize-html@2",
+    "@types/sanitize-html": "npm:@types/sanitize-html@2"
+  },
+  "nodeModulesDir": "none",
+  "fmt": {
+    "exclude": [
+      "tests/caixas/__snapshots__/"
+    ]
+  }
+}

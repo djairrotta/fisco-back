@@ -1,0 +1,74 @@
+/* ============================================================== login */
+.login {
+  min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+  padding: calc(var(--seg-topo) + 24px) 20px calc(var(--seg-base) + 24px);
+  background:
+    radial-gradient(80% 60% at 50% 0%, color-mix(in oklab, var(--acento) 9%, transparent), transparent 70%),
+    var(--janela);
+}
+.login__cartao {
+  width: 100%; max-width: 380px; display: grid; justify-items: center; gap: 10px; text-align: center;
+  padding: 40px 32px 28px; border-radius: 26px; background: var(--papel); box-shadow: var(--sombra-2);
+}
+.login__icone { width: 76px; height: 76px; border-radius: 18px; box-shadow: 0 8px 22px -8px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.1); margin-bottom: 8px; }
+.login__titulo { margin: 0; font: 600 34px/1.05 var(--fonte-serifa); letter-spacing: -0.02em; }
+.login__sub { margin: 0 0 18px; color: var(--texto-2); font: var(--t-corpo-g); text-wrap: balance; }
+.login__cartao .aviso { text-align: left; width: 100%; }
+.login__erro { margin: 0; min-height: 18px; color: var(--perigo); font: 500 13px/1.35 var(--fonte); }
+.login__nota { margin: 6px 0 0; display: inline-flex; align-items: center; gap: 6px; color: var(--texto-3); font: var(--t-nota); }
+@media (max-width: 767px) {
+  .login { background: var(--papel); align-items: stretch; }
+  .login__cartao { box-shadow: none; padding: 0; align-content: center; background: none; }
+}
+
+/* ============================================================ páginas */
+.pagina { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--superficie); }
+.pagina__rolagem { flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px 48px; }
+.pagina__barra { display: flex; align-items: center; gap: 6px; max-width: 680px; margin: 0 auto; min-height: var(--barra-h); }
+.pagina__cab { max-width: 680px; margin: 4px auto 22px; padding: 0 14px; }
+.pagina__titulo { margin: 0; font: var(--t-titulo-g); letter-spacing: -0.02em; }
+.pagina__sub { margin: 6px 0 0; color: var(--texto-2); font: var(--t-corpo); }
+.pagina__corpo { max-width: 680px; margin: 0 auto; }
+.pagina__vazio { margin: 0 14px 24px; color: var(--texto-2); }
+.pagina__marca { display: none; }
+.janela--uma .pagina__rolagem { padding: var(--seg-topo) 16px 32px; }
+.janela--uma .pagina__barra { min-height: 44px; }
+.janela--uma .pagina__titulo { font-size: 32px; }
+.janela--uma .pagina__cab { margin-bottom: 18px; padding: 0 4px; }
+.janela--uma .grupo__titulo { margin-left: 16px; font-size: 13px; }
+
+/* upload de logo/favicon */
+.upload { position: relative; display: flex; align-items: center; gap: 14px; padding: 12px 16px; }
+.upload__img { flex: none; width: 56px; height: 56px; border-radius: 14px; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.14); }
+.upload__img--p { width: 36px; height: 36px; border-radius: 9px; margin: 0 10px; }
+.upload__img img { max-width: 82%; max-height: 82%; object-fit: contain; }
+.upload__vazio { font: var(--t-mini); color: #8e8e93; text-align: center; padding: 4px; }
+.upload__txt { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.upload__txt .txt-perigo, .upload__txt .txt-ok { font: var(--t-nota); }
+.upload__acoes { flex: none; display: flex; gap: 6px; }
+.upload__acoes label.btn { cursor: pointer; }
+.previa-ass { padding: 14px 16px; border-radius: var(--r-2); background: #fff; color: #1c1c1e; overflow-x: auto; box-shadow: inset 0 0 0 0.5px var(--linha-forte); }
+.previa-ass img { max-width: 100%; height: auto; }
+
+/* Registro (Ajustes → Diagnóstico): lista de atividade e erros. */
+.reg-filtros { grid-template-columns: 1fr; }
+.reg-filtros .campo { width: 100%; }
+.reg-linha { padding: 10px 16px; position: relative; }
+.grupo__corpo > .reg-linha + .reg-linha::before {
+  content: ""; position: absolute; left: 16px; right: 0; top: 0;
+  border-top: 0.5px solid var(--linha);
+}
+.reg-linha__topo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.reg-linha__area { font: var(--t-mini); color: var(--texto-2); text-transform: uppercase; letter-spacing: 0.03em; }
+.reg-linha__hora { margin-left: auto; font: var(--t-nota); color: var(--texto-3); }
+.reg-linha__msg { margin-top: 4px; font: var(--t-corpo); color: var(--texto); overflow-wrap: anywhere; }
+.reg-linha--erro .reg-linha__msg { color: var(--perigo); }
+
+/* Contas Resend (Ajustes → Diagnóstico). */
+.reg-acoes { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.reg-conta-nome { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.reg-slot { padding: 10px 16px; position: relative; }
+.grupo__corpo > .reg-slot + .reg-slot::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0;
+  border-top: 0.5px solid var(--linha-forte);
+}

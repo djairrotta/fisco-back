@@ -1,0 +1,13 @@
+.git
+dist
+docs
+scripts
+**/node_modules
+**/dist
+**/dev-dist
+**/.env*
+**/.DS_Store
+**/*.map
+backend/tests
+pwa/src/__tests__
+*.zip
