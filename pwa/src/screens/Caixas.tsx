@@ -66,6 +66,47 @@ function NovaCaixa({ aoCriar }: { aoCriar: (c: Caixa) => void }) {
   );
 }
 
+interface Importacao { total: number; importadas: number; resultado: { endereco: string; estado: string; detalhe?: string }[] }
+const ESTADO_IMPORT: Record<string, string> = {
+  importada: "importada", ja_existia: "já estava no Correio", senha_diferente: "senha diferente (adicione à mão)",
+  desativada_no_poste: "desativada no poste.io", nao_tentada: "não tentada", erro: "erro",
+};
+
+function ImportarPoste({ aoImportar }: { aoImportar: () => void }) {
+  const [senha, setSenha] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const [erro, setErro] = useState("");
+  const [r, setR] = useState<Importacao | null>(null);
+  async function importar(e: FormEvent) {
+    e.preventDefault();
+    setOcupado(true); setErro(""); setR(null);
+    try {
+      const x = await api.post<Importacao>("/api/caixas/importar-poste", senha ? { senha } : {});
+      setR(x);
+      aoImportar();
+    } catch (x) { setErro(erroMsg(x)); } finally { setOcupado(false); }
+  }
+  return (
+    <Grupo titulo="Importar do poste.io" nota="Traz todas as caixas criadas no poste.io que ainda não estão aqui. Usa a senha padrão do servidor, ou a que você digitar; caixa com outra senha fica de fora para você adicionar à mão.">
+      <form className="form" onSubmit={importar} aria-label="Importar do poste.io">
+        <Campo rotulo="Senha das caixas" ajuda="Opcional: vazio usa a senha padrão configurada no servidor.">
+          <input className="campo" type="password" autoComplete="off" aria-label="Senha das caixas" value={senha} onChange={(e) => setSenha(e.target.value)} />
+        </Campo>
+        <Button type="submit" variante="cinza" disabled={ocupado}>{ocupado ? "Importando e testando…" : "Importar caixas do poste.io"}</Button>
+        {erro && <p className="txt-perigo" role="alert">{erro}</p>}
+        {r && (
+          <div role="status">
+            <p className="txt-ok">{r.importadas} de {r.total} caixas importadas.</p>
+            <ul className="txt-nota" style={{ margin: 0, paddingLeft: 18 }}>
+              {r.resultado.filter((x) => x.estado !== "ja_existia").map((x) => <li key={x.endereco}>{x.endereco}: {ESTADO_IMPORT[x.estado] ?? x.estado}</li>)}
+            </ul>
+          </div>
+        )}
+      </form>
+    </Grupo>
+  );
+}
+
 export default function Caixas() {
   const { caixas, erro, recarregar, versao } = useCaixas();
   const nav = useNavigate();
@@ -84,6 +125,7 @@ export default function Caixas() {
       )}
       {caixas && caixas.length === 0 && <p className="pagina__vazio">Nenhuma caixa ainda. Adicione a primeira abaixo.</p>}
       <NovaCaixa aoCriar={() => void recarregar()} />
+      <ImportarPoste aoImportar={() => void recarregar()} />
     </Pagina>
   );
 }

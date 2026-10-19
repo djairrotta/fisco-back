@@ -34,6 +34,11 @@ import type { SincronizadorCaixas } from "../mail/vigia_caixa.ts";
 import { MENSAGEM_SENHA_ILEGIVEL } from "../mail/pool.ts";
 import type { ResendConfig } from "../mail/resend.ts";
 import { resolverRemetenteDb } from "../mail/resend_contas.ts";
+import {
+  configPosteAdmin,
+  ErroPosteAdmin,
+  listarCaixasPoste,
+} from "../mail/poste_admin.ts";
 
 export interface CaixasDeps {
   sql: Sql;
@@ -140,6 +145,109 @@ export function rotasCaixas(d: CaixasDeps): Hono {
   }
 
   app.get("/", async (c) => c.json({ caixas: await listarCaixas(sql) }));
+
+  // Importa do poste.io todas as caixas que ainda não estão no Correio, entrando
+  // em cada uma com POSTE_SENHA_CAIXAS (ou a senha enviada). Caixa cuja senha não
+  // confere NÃO é adicionada. Para após 3 recusas seguidas, para não acionar o
+  // bloqueio de força bruta do poste.io.
+  app.get("/poste", async (c) => {
+    const cfg = configPosteAdmin(d.mail.imapHost);
+    if (!cfg) {
+      return c.json({ erro: "Defina POSTE_ADMIN_USUARIO e POSTE_ADMIN_SENHA no app do Correio" }, 503);
+    }
+    try {
+      const doPoste = await listarCaixasPoste(cfg);
+      const ja = new Set((await listarCaixas(sql)).map((x) => x.endereco));
+      return c.json({
+        caixas: doPoste.map((x) => ({ ...x, noCorreio: ja.has(x.endereco) })),
+      });
+    } catch (e) {
+      if (e instanceof ErroPosteAdmin) {
+        return c.json({ erro: e.message }, e.status === 401 ? 401 : 502);
+      }
+      throw e;
+    }
+  });
+
+  app.post("/importar-poste", json, async (c) => {
+    const cfg = configPosteAdmin(d.mail.imapHost);
+    if (!cfg) {
+      return c.json({ erro: "Defina POSTE_ADMIN_USUARIO e POSTE_ADMIN_SENHA no app do Correio" }, 503);
+    }
+    const b = await corpo(c, z.object({ senha: Senha.optional() }));
+    if (!b.ok) return b.r;
+    const senha = b.v.senha ?? cfg.senhaCaixas;
+    if (!senha) {
+      return c.json({ erro: "Informe a senha das caixas (ou defina POSTE_SENHA_CAIXAS)" }, 400);
+    }
+    let doPoste;
+    try {
+      doPoste = await listarCaixasPoste(cfg);
+    } catch (e) {
+      if (e instanceof ErroPosteAdmin) {
+        return c.json({ erro: e.message }, e.status === 401 ? 401 : 502);
+      }
+      throw e;
+    }
+    const ja = new Set((await listarCaixas(sql)).map((x) => x.endereco));
+    const resultado: { endereco: string; estado: string; detalhe?: string }[] = [];
+    let recusasSeguidas = 0;
+    let ordem = ja.size;
+    for (const p of doPoste) {
+      if (ja.has(p.endereco)) {
+        resultado.push({ endereco: p.endereco, estado: "ja_existia" });
+        continue;
+      }
+      if (p.desativada) {
+        resultado.push({ endereco: p.endereco, estado: "desativada_no_poste" });
+        continue;
+      }
+      if (recusasSeguidas >= 3) {
+        resultado.push({ endereco: p.endereco, estado: "nao_tentada", detalhe: "parei após 3 senhas recusadas seguidas" });
+        continue;
+      }
+      let caixa;
+      try {
+        caixa = await criarCaixa(sql, d.masterKey, {
+          endereco: p.endereco,
+          senha,
+          nome_exibicao: p.nome || undefined,
+          ordem: ordem++,
+        });
+      } catch (e) {
+        if (e instanceof EnderecoDuplicado) {
+          resultado.push({ endereco: p.endereco, estado: "ja_existia" });
+          continue;
+        }
+        throw e;
+      }
+      const teste = await testarEGravar(caixa.id, caixa.endereco, senha);
+      if (teste.falhaAutenticacao || !teste.imap) {
+        // não deixa caixa quebrada na lista: remove e informa
+        await removerCaixa(sql, caixa.id);
+        recusasSeguidas += teste.falhaAutenticacao ? 1 : 0;
+        resultado.push({
+          endereco: p.endereco,
+          estado: teste.falhaAutenticacao ? "senha_diferente" : "erro",
+          detalhe: teste.erro,
+        });
+        continue;
+      }
+      recusasSeguidas = 0;
+      await auditarSemFalhar(sql, "caixa_importada_poste", caixa.endereco);
+      sincronizar(caixa.id);
+      resultado.push({
+        endereco: p.endereco,
+        estado: "importada",
+        detalhe: teste.smtp ? `envio via ${teste.envioVia ?? "poste.io"}` : `IMAP ok; SMTP: ${teste.erro ?? "falhou"}`,
+      });
+    }
+    return c.json({
+      total: doPoste.length,
+      importadas: resultado.filter((r) => r.estado === "importada").length,
+      resultado,
+    });
+  });
 
   app.post("/", json, async (c) => {
     const b = await corpo(c, Nova);

@@ -36,6 +36,12 @@ export async function sair(): Promise<void> {
 export interface EstadoAuth {
   host: string;
   origem: string;
+  /** Login por usuário e senha ligado no servidor (CORREIO_LOGIN_*). */
+  loginSenha?: boolean;
+}
+
+export async function entrarComSenha(usuario: string, senha: string): Promise<void> {
+  await api.post("/api/auth/senha", { usuario, senha });
 }
 
 export const estadoAuth = () => api.get<EstadoAuth>("/api/auth/estado");

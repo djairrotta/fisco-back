@@ -26,6 +26,8 @@ import {
   verificarRegistro,
   type WebauthnDeps,
 } from "../auth/webauthn.ts";
+import { configSenha, loginSenhaValido } from "../auth/senha.ts";
+import { criarSessao } from "../auth/session.ts";
 import { limiteCorpo } from "./util.ts";
 
 const CAMINHO_DESAFIO = "/api/auth";
@@ -115,6 +117,11 @@ function mensagemRecusa(e: NaoAutorizado, caminho: string): string {
   return "Não autorizado";
 }
 
+const LoginSenhaBody = z.object({
+  usuario: z.string().trim().min(1).max(60),
+  senha: z.string().min(1).max(200),
+}).strict();
+
 export function rotasAuth(sql: Sql, w: WebauthnDeps): Hono {
   const app = new Hono();
 
@@ -122,7 +129,12 @@ export function rotasAuth(sql: Sql, w: WebauthnDeps): Hono {
   // de chamar a passkey (RP ID/origem divergentes falham no navegador).
   app.get(
     "/estado",
-    (c) => c.json({ host: hostEsperado(w.cfg.origin), origem: w.cfg.origin }),
+    (c) =>
+      c.json({
+        host: hostEsperado(w.cfg.origin),
+        origem: w.cfg.origin,
+        loginSenha: configSenha() !== null,
+      }),
   );
 
   app.use("*", limiteCorpo());
@@ -200,6 +212,31 @@ export function rotasAuth(sql: Sql, w: WebauthnDeps): Hono {
       ip: ipCliente(c),
       dispositivo,
     });
+    return c.json({ ok: true });
+  });
+
+  // Login por usuário e senha (só se CORREIO_LOGIN_USUARIO/CORREIO_LOGIN_SENHA_HASH existirem).
+  // Limite próprio: 5 tentativas por IP a cada 15 min.
+  app.post("/senha", async (c) => {
+    if (!configSenha()) {
+      return c.json({ erro: "Login por senha desligado" }, 404);
+    }
+    const ip = ipCliente(c);
+    if (!limitarTentativas(`senha:${ip}`, 5, 15 * 60_000)) {
+      return c.json({ erro: "Muitas tentativas; aguarde 15 minutos" }, 429);
+    }
+    const b = LoginSenhaBody.safeParse(await lerJson(c));
+    if (!b.success) return c.json({ erro: "Dados inválidos" }, 400);
+    const ok = await loginSenhaValido(b.data.usuario, b.data.senha);
+    const dispositivo = (c.req.header("User-Agent") ?? "desconhecido").slice(0, 200);
+    await registrar(sql, ok ? "login_senha" : "login_senha_falhou", null, {
+      ip,
+      dispositivo,
+      usuario: b.data.usuario.slice(0, 60),
+    });
+    if (!ok) return c.json({ erro: "Usuário ou senha incorretos" }, 401);
+    await sair(sql, getCookie(c, COOKIE_SESSAO));
+    definirCookieSessao(c, await criarSessao(sql, `senha · ${dispositivo}`));
     return c.json({ ok: true });
   });
 
