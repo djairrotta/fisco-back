@@ -1,0 +1,11 @@
+.git
+.superpowers
+dist
+docs
+**/node_modules
+**/dist
+**/dev-dist
+**/.env*
+backend/tests
+pwa/src/__tests__
+*.zip

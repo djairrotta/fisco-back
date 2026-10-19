@@ -1,0 +1,57 @@
+:root {
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", sans-serif;
+  --bg: #f2f2f7;
+  --bg-grad: radial-gradient(120% 60% at 50% -10%, #dbe9ff 0%, transparent 60%);
+  --text: #1c1c1e;
+  --text-2: #6c6c70;
+  --glass: rgba(255, 255, 255, 0.68);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --hairline: rgba(60, 60, 67, 0.18);
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+  --primary: #0a84ff;
+  --primary-2: #0060df;
+  --primary-text: #fff;
+  --danger: #ff3b30;
+  --warn: #ff9f0a;
+  --ok: #30d158;
+  /* Crimson controlado da aba Ataque (usado só ali). */
+  --crimson: #e02d4b;
+  --crimson-2: #a3122c;
+  --crimson-soft: rgba(224, 45, 75, 0.14);
+  --crimson-line: rgba(224, 45, 75, 0.4);
+  --crimson-metal: linear-gradient(180deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0) 52%),
+    linear-gradient(180deg, #e8314f 0%, #a3122c 100%);
+  --tile: rgba(255, 255, 255, 0.5);
+  --tile-line: rgba(60, 60, 67, 0.12);
+  --radius: 20px;
+  --tabbar-h: 56px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --btn-metal: linear-gradient(180deg, rgba(255,255,255,0.38) 0%, rgba(255,255,255,0) 52%),
+    linear-gradient(180deg, #3b9bff 0%, #0a6cf0 100%);
+  --btn-metal-2: linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(235,235,240,0.9) 100%);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000;
+    --bg-grad: radial-gradient(120% 60% at 50% -10%, #0e2a52 0%, transparent 60%);
+    --text: #f5f5f7;
+    --text-2: #98989f;
+    --glass: rgba(44, 44, 46, 0.62);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --hairline: rgba(84, 84, 88, 0.55);
+    --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    --primary: #0a84ff;
+    --btn-metal: linear-gradient(180deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0) 52%),
+      linear-gradient(180deg, #2f8cff 0%, #0556c9 100%);
+    --btn-metal-2: linear-gradient(180deg, rgba(120,120,128,0.55) 0%, rgba(70,70,76,0.55) 100%);
+    --crimson: #ff6b84;
+    --crimson-soft: rgba(224, 45, 75, 0.2);
+    --crimson-line: rgba(255, 107, 132, 0.4);
+    --tile: rgba(255, 255, 255, 0.05);
+    --tile-line: rgba(255, 255, 255, 0.08);
+  }
+}
