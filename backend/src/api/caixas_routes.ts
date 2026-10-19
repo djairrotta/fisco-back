@@ -36,8 +36,11 @@ import type { ResendConfig } from "../mail/resend.ts";
 import { resolverRemetenteDb } from "../mail/resend_contas.ts";
 import {
   configPosteAdmin,
+  criarCaixaPoste,
   ErroPosteAdmin,
+  garantirDominioPoste,
   listarCaixasPoste,
+  senhaNova,
 } from "../mail/poste_admin.ts";
 
 export interface CaixasDeps {
@@ -167,6 +170,41 @@ export function rotasCaixas(d: CaixasDeps): Hono {
       }
       throw e;
     }
+  });
+
+  // Cria caixa NOVA no poste.io (e o domínio, se faltar) com senha forte gerada,
+  // e já adiciona ao Correio. Nunca mexe em caixa que já existe.
+  app.post("/poste/criar", json, async (c) => {
+    const cfg = configPosteAdmin(d.mail.imapHost);
+    if (!cfg) {
+      return c.json({ erro: "Defina POSTE_ADMIN_USUARIO e POSTE_ADMIN_SENHA no app do Correio" }, 503);
+    }
+    const b = await corpo(c, z.object({ endereco: z.string().trim().toLowerCase().email().max(254), nome_exibicao: Nome.optional() }));
+    if (!b.ok) return b.r;
+    const endereco = b.v.endereco;
+    const senha = senhaNova();
+    try {
+      const dominio = endereco.split("@")[1];
+      const dom = await garantirDominioPoste(cfg, dominio);
+      await criarCaixaPoste(cfg, endereco, b.v.nome_exibicao ?? "", senha);
+      await auditarSemFalhar(sql, "caixa_criada_poste", endereco, { dominio: dom });
+    } catch (e) {
+      if (e instanceof ErroPosteAdmin) {
+        return c.json({ erro: e.message }, e.status === 409 ? 409 : e.status === 401 ? 401 : 502);
+      }
+      throw e;
+    }
+    let caixa;
+    try {
+      caixa = await criarCaixa(sql, d.masterKey, { endereco, senha, nome_exibicao: b.v.nome_exibicao });
+    } catch (e) {
+      if (e instanceof EnderecoDuplicado) return c.json({ erro: e.message }, 409);
+      throw e;
+    }
+    const teste = await testarEGravar(caixa.id, caixa.endereco, senha);
+    sincronizar(caixa.id);
+    // A senha volta UMA vez (para usar no webmail, se quiser); no Correio fica cifrada.
+    return c.json({ caixa: await obterCaixa(sql, caixa.id), teste, senha }, 201);
   });
 
   app.post("/importar-poste", json, async (c) => {
