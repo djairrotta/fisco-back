@@ -2,17 +2,17 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Logo } from "../ui";
 import { ApiError } from "../api";
-import { cadastrarPasskey, entrar } from "../auth";
+import { cadastrarPasskey, entrar, entrarComSenha } from "../auth";
 
 /** Origem esperada pelo servidor (WEBAUTHN_ORIGIN), via rota pública. */
-async function origemEsperada(): Promise<string | null> {
+async function estadoAuth(): Promise<{ origem: string | null; loginSenha: boolean }> {
   try {
     const r = await fetch("/api/auth/estado", { credentials: "include", headers: { Accept: "application/json" } });
-    if (!r.ok) return null;
-    const j = (await r.json()) as { origem?: unknown };
-    return typeof j.origem === "string" ? j.origem : null;
+    if (!r.ok) return { origem: null, loginSenha: false };
+    const j = (await r.json()) as { origem?: unknown; loginSenha?: unknown };
+    return { origem: typeof j.origem === "string" ? j.origem : null, loginSenha: j.loginSenha === true };
   } catch {
-    return null;
+    return { origem: null, loginSenha: false };
   }
 }
 
@@ -39,12 +39,48 @@ export default function Login() {
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState("");
   const [esperada, setEsperada] = useState<string | null>(null);
+  const [loginSenha, setLoginSenha] = useState(false);
+  const [usuario, setUsuario] = useState("");
+  const [senha, setSenha] = useState("");
+  const [logadoPorSenha, setLogadoPorSenha] = useState(false);
 
   useEffect(() => {
     let vivo = true;
-    void origemEsperada().then((o) => { if (vivo && o) setEsperada(o); });
+    void estadoAuth().then((e) => {
+      if (!vivo) return;
+      if (e.origem) setEsperada(e.origem);
+      setLoginSenha(e.loginSenha);
+    });
     return () => { vivo = false; };
   }, []);
+
+  async function entrarSenha(ev: React.FormEvent) {
+    ev.preventDefault();
+    setOcupado(true);
+    setErro("");
+    try {
+      await entrarComSenha(usuario, senha);
+      setSenha("");
+      setLogadoPorSenha(true);
+    } catch (e) {
+      setErro(mensagemErro(e));
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function cadastrarAgora() {
+    setOcupado(true);
+    setErro("");
+    try {
+      await cadastrarPasskey();
+      nav(voltar, { replace: true });
+    } catch (e) {
+      setErro(`${mensagemErro(e)} Você continua logado; pode tentar de novo ou seguir sem passkey.`);
+    } finally {
+      setOcupado(false);
+    }
+  }
 
   async function acionar() {
     setOcupado(true);
@@ -81,9 +117,31 @@ export default function Login() {
         </div>
       )}
       <p>{convite ? "Convite recebido. Cadastre este dispositivo para acessar." : "Monitor de segurança"}</p>
-      <Button bloco onClick={acionar} disabled={ocupado}>
-        {convite ? "Cadastrar este dispositivo (Face ID)" : "Entrar com passkey"}
-      </Button>
+      {logadoPorSenha ? (
+        <>
+          <p>Você entrou com usuário e senha. Cadastre a passkey deste aparelho para as próximas vezes.</p>
+          <Button bloco onClick={cadastrarAgora} disabled={ocupado}>Cadastrar passkey neste aparelho</Button>
+          <Button bloco variante="secundario" onClick={() => nav(voltar, { replace: true })} disabled={ocupado}>
+            Agora não, ir para o painel
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button bloco onClick={acionar} disabled={ocupado}>
+            {convite ? "Cadastrar este dispositivo (Face ID)" : "Entrar com passkey"}
+          </Button>
+          {loginSenha && !convite && (
+            <form className="campos login-senha" onSubmit={entrarSenha}>
+              <p className="sub" style={{ margin: "16px 0 0" }}>ou entre com usuário e senha</p>
+              <input className="campo" autoComplete="username" placeholder="Usuário" value={usuario}
+                onChange={(e) => setUsuario(e.target.value)} aria-label="Usuário" required />
+              <input className="campo" type="password" autoComplete="current-password" placeholder="Senha" value={senha}
+                onChange={(e) => setSenha(e.target.value)} aria-label="Senha" required />
+              <Button bloco variante="secundario" type="submit" disabled={ocupado || !usuario || !senha}>Entrar</Button>
+            </form>
+          )}
+        </>
+      )}
       <p className="erro" role="status" aria-live="assertive">{erro}</p>
     </main>
   );

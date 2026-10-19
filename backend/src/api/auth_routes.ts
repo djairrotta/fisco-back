@@ -24,6 +24,8 @@ import {
   verificarRegistro,
   type WebauthnDeps,
 } from "../auth/webauthn.ts";
+import { configSenha, loginSenhaValido } from "../auth/senha.ts";
+import { criarSessao } from "../auth/session.ts";
 
 const CAMINHO_DESAFIO = "/api/auth";
 
@@ -41,6 +43,11 @@ const RespostaPasskey = z.object({
   type: z.string().max(64).optional(),
   response: z.object({}).passthrough(),
 }).passthrough();
+
+const LoginSenhaBody = z.object({
+  usuario: z.string().trim().min(1).max(60),
+  senha: z.string().min(1).max(200),
+}).strict();
 
 const OpcoesRegistroBody = z.object({
   convite: z.string().max(200).optional(),
@@ -78,7 +85,12 @@ export function rotasAuth(sql: Sql, w: WebauthnDeps): Hono {
   // Público e fora do limite de tentativas: o PWA compara com location.origin.
   app.get(
     "/estado",
-    (c) => c.json({ origem: w.cfg.origin, rpId: w.cfg.rpId }),
+    (c) =>
+      c.json({
+        origem: w.cfg.origin,
+        rpId: w.cfg.rpId,
+        loginSenha: configSenha() !== null,
+      }),
   );
 
   app.use("*", async (c, next) => {
@@ -148,6 +160,30 @@ export function rotasAuth(sql: Sql, w: WebauthnDeps): Hono {
     // Uma sessão por dispositivo: revoga a anterior deste navegador.
     await sair(sql, getCookie(c, COOKIE_SESSAO));
     definirCookieSessao(c, token);
+    return c.json({ ok: true });
+  });
+
+  // Login por usuário e senha (só se VIGIA_LOGIN_USUARIO/VIGIA_LOGIN_SENHA_HASH existirem).
+  // Limite próprio, mais duro que o geral: 5 tentativas por IP a cada 15 min.
+  app.post("/senha", async (c) => {
+    if (!configSenha()) {
+      return c.json({ erro: "Login por senha desligado" }, 404);
+    }
+    const ip = ipCliente(c);
+    if (!limitarTentativas(`senha:${ip}`, 5, 15 * 60_000)) {
+      return c.json({ erro: "Muitas tentativas; aguarde 15 minutos" }, 429);
+    }
+    const b = LoginSenhaBody.safeParse(await lerJson(c));
+    if (!b.success) return c.json({ erro: "Dados inválidos" }, 400);
+    const ok = await loginSenhaValido(b.data.usuario, b.data.senha);
+    const dispositivo = (c.req.header("User-Agent") ?? "desconhecido").slice(0, 200);
+    await sql`INSERT INTO vigia.auditoria (ator, acao, alvo, detalhes)
+      VALUES ('usuario', ${ok ? "login_senha" : "login_senha_falhou"}, ${ip},
+        ${sql.json({ dispositivo, usuario: b.data.usuario.slice(0, 60) })})`
+      .catch((e: unknown) => console.error("[auth] auditoria:", e));
+    if (!ok) return c.json({ erro: "Usuário ou senha incorretos" }, 401);
+    await sair(sql, getCookie(c, COOKIE_SESSAO));
+    definirCookieSessao(c, await criarSessao(sql, `senha · ${dispositivo}`));
     return c.json({ ok: true });
   });
 

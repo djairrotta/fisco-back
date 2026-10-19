@@ -12,13 +12,18 @@ export async function entrar(): Promise<void> {
 }
 
 /** Cadastra este dispositivo (Face ID/Touch ID) a partir de um convite. */
-export async function cadastrarPasskey(convite: string): Promise<void> {
+/** Com convite (primeiro aparelho) ou, já logado, sem convite (aparelho novo). */
+export async function cadastrarPasskey(convite?: string): Promise<void> {
   const optionsJSON = await api.post<Parameters<typeof startRegistration>[0]["optionsJSON"]>(
     "/api/auth/registro/opcoes",
-    { convite },
+    convite ? { convite } : {},
   );
   const credencial = await startRegistration({ optionsJSON });
   await api.post("/api/auth/registro", credencial);
+}
+
+export async function entrarComSenha(usuario: string, senha: string): Promise<void> {
+  await api.post("/api/auth/senha", { usuario, senha });
 }
 
 export async function sair(): Promise<void> {
