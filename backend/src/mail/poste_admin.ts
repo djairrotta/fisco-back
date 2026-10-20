@@ -121,3 +121,11 @@ export async function criarCaixaPoste(cfg: ConfigPosteAdmin, endereco: string, n
   const r = await chamar(cfg, "POST", "/boxes", { name: nome || endereco, email: endereco, passwordPlaintext: senha, disabled: false }, f);
   if (!r.ok) throw new ErroPosteAdmin(`poste.io não criou ${endereco}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
 }
+
+/** Define a senha de uma caixa EXISTENTE no poste.io (ação explícita do dono). */
+export async function definirSenhaCaixaPoste(cfg: ConfigPosteAdmin, endereco: string, senha: string, f: Fetch = fetch): Promise<void> {
+  const g = await chamar(cfg, "GET", `/boxes/${encodeURIComponent(endereco)}`, undefined, f);
+  if (!g.ok) throw new ErroPosteAdmin(`${endereco} não existe no poste.io`, 404);
+  const r = await chamar(cfg, "PATCH", `/boxes/${encodeURIComponent(endereco)}`, { passwordPlaintext: senha }, f);
+  if (!r.ok) throw new ErroPosteAdmin(`poste.io não trocou a senha de ${endereco}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+}

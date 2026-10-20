@@ -37,6 +37,7 @@ import { resolverRemetenteDb } from "../mail/resend_contas.ts";
 import {
   configPosteAdmin,
   criarCaixaPoste,
+  definirSenhaCaixaPoste,
   ErroPosteAdmin,
   garantirDominioPoste,
   listarCaixasPoste,
@@ -205,6 +206,42 @@ export function rotasCaixas(d: CaixasDeps): Hono {
     sincronizar(caixa.id);
     // A senha volta UMA vez (para usar no webmail, se quiser); no Correio fica cifrada.
     return c.json({ caixa: await obterCaixa(sql, caixa.id), teste, senha }, 201);
+  });
+
+  // Troca a senha de uma caixa que JÁ existe no poste.io e a adiciona (ou atualiza)
+  // no Correio. Ação explícita: quem usa a senha antiga em outro app precisa da nova.
+  app.post("/poste/senha", json, async (c) => {
+    const cfg = configPosteAdmin(d.mail.imapHost);
+    if (!cfg) {
+      return c.json({ erro: "Defina POSTE_ADMIN_USUARIO e POSTE_ADMIN_SENHA no app do Correio" }, 503);
+    }
+    const b = await corpo(c, z.object({
+      endereco: z.string().trim().toLowerCase().email().max(254),
+      senha: z.string().min(10).max(200),
+      nome_exibicao: Nome.optional(),
+    }));
+    if (!b.ok) return b.r;
+    try {
+      await definirSenhaCaixaPoste(cfg, b.v.endereco, b.v.senha);
+    } catch (e) {
+      if (e instanceof ErroPosteAdmin) {
+        return c.json({ erro: e.message }, e.status === 404 ? 404 : e.status === 401 ? 401 : 502);
+      }
+      throw e;
+    }
+    await auditarSemFalhar(sql, "caixa_senha_poste", b.v.endereco);
+    const existente = (await listarCaixas(sql)).find((x) => x.endereco === b.v.endereco);
+    let id: number;
+    if (existente) {
+      await atualizarCaixa(sql, d.masterKey, existente.id, { senha: b.v.senha, ...(b.v.nome_exibicao ? { nome_exibicao: b.v.nome_exibicao } : {}) });
+      id = existente.id;
+    } else {
+      const cx = await criarCaixa(sql, d.masterKey, { endereco: b.v.endereco, senha: b.v.senha, nome_exibicao: b.v.nome_exibicao });
+      id = cx.id;
+    }
+    const teste = await testarEGravar(id, b.v.endereco, b.v.senha);
+    sincronizar(id);
+    return c.json({ caixa: await obterCaixa(sql, id), teste });
   });
 
   app.post("/importar-poste", json, async (c) => {
